@@ -1,0 +1,15 @@
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --pk: #e8547a; --pk2: #f06b8a; --pdim: rgba(232,84,122,0.15);
+  --bg: #0f1117; --bg2: #1a1d27; --bg3: #222638; --bg4: #2a2f45;
+  --t: #f0f2f8; --t2: #9ba3c0; --t3: #6b7494;
+  --b: rgba(255,255,255,0.08); --b2: rgba(255,255,255,0.15);
+  --grn: #4ade80; --blu: #60a5fa; --amb: #fbbf24;
+  --glass: rgba(12,14,22,0.88);
+}
+html, body { background: var(--bg); color: var(--t); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+button { font-family: inherit; cursor: pointer; }
+input, textarea, select { font-family: inherit; }
+a { color: inherit; text-decoration: none; }
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.no-scrollbar { scrollbar-width: none; }
