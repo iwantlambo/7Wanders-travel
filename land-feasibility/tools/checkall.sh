@@ -41,6 +41,7 @@ done
 step "2. index.html 是否已列出每個 js/ 下的檔案"
 for f in $JSFILES; do
   case "$f" in
+    ./js/data/lvr/*) continue ;;     # 各縣市實價登錄行情檔由 main.js 依縣市延遲載入，不列在 index.html（見 2c）
     ./js/*) ;;
     *) continue ;;
   esac
@@ -65,6 +66,16 @@ else
     fi
   done
 fi
+
+step "2c. 每個縣市都有實價登錄行情檔（js/data/lvr/{代碼}.js），且 main.js 由同一路徑延遲載入"
+CODES=$(grep -oE '\["[^"]+", "[A-Z]",' js/data/districts.js | grep -oE '"[A-Z]"' | tr -d '"')
+NCODE=0
+for c in $CODES; do
+  NCODE=$((NCODE + 1))
+  if [ -f "js/data/lvr/$c.js" ]; then ok "js/data/lvr/$c.js 存在"; else bad "缺少 js/data/lvr/$c.js"; fi
+done
+if [ "$NCODE" -ne 22 ]; then bad "districts.js 的縣市代碼應為 22 個，實際 $NCODE 個"; fi
+if grep -q "'js/data/lvr/' + code + '.js'" js/main.js; then ok "main.js 依縣市延遲載入行情檔"; else bad "main.js 沒有延遲載入行情檔的程式"; fi
 
 # ---------------------------------------------------------------- 3. 煙霧測試
 step "3. node tools/smoke.js"

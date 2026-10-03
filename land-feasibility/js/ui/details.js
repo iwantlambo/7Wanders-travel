@@ -94,15 +94,16 @@ window.TD = window.TD || {};
      1. 法規檢討明細
      ------------------------------------------------------------------ */
 
-  var ST_ZH = { pass: '通過', fail: '不通過', manual: '算不出來', na: '不適用' };
+  var ST_ZH = { pass: '通過', fail: '不通過', warn: '注意', info: '提醒', na: '不適用' };
 
   function statusCell(v) {
     var s = String(v === null || v === undefined ? '' : v);
     if (s === 'pass') return U().lamp('green', ST_ZH.pass);
     if (s === 'fail') return U().lamp('red', ST_ZH.fail);
-    if (s === 'manual') return U().lamp('amber', ST_ZH.manual);
+    if (s === 'warn') return U().lamp('amber', ST_ZH.warn);
+    if (s === 'info') return '<span class="tag">' + esc(ST_ZH.info) + '</span>';
     if (s === 'na') return '<span class="tag">' + esc(ST_ZH.na) + '</span>';
-    return '<span class="tag">' + esc(s ? zh(s) : '未判定') + '</span>';
+    return '<span class="tag">' + esc(s ? zh(s) : '—') + '</span>';
   }
 
   function regBlock(ctx, p) {
@@ -119,16 +120,11 @@ window.TD = window.TD || {};
     h += U().table([
       { k: 'label', label: '項目' },
       { k: 'status', label: '狀態', render: function (v) { return statusCell(v); } },
-      { k: 'value', label: '數值', render: function (v) { return small(v, 24); } },
+      { k: 'value', label: '計算結果', render: function (v) { return small(v, 30); } },
       { k: 'requirement', label: '規定', render: function (v) { return small(v, 34); } },
       { k: 'law', label: '法源', render: function (v) { return small(v, 24); } },
-      { k: 'note', label: '備註', render: function (v, r) {
-        var t = (v === null || v === undefined) ? '' : String(v);
-        if (!t && r && r.status === 'manual') {
-          t = (r.requirement ? String(r.requirement) + '：' : '') + '需要圖資或建築師計算書才算得出來。';
-        }
-        return small(t, 46);
-      } }
+      { k: 'note', label: '說明', render: function (v) { return small(v, 52); } },
+      { k: 'conf', label: '信心', render: function (v) { return v ? U().badge(v) : dash(); } }
     ], isArr(m3.checks) ? m3.checks : [], { p: p, empty: '沒有檢核項目。' });
 
     if (m3.zoneSource) h += line('分區依據 ' + clip(m3.zoneSource, 72));
@@ -177,7 +173,23 @@ window.TD = window.TD || {};
     var base = rawNum(m4.baseFloorM2Used);
     var moneyOk = (base !== null && base > 0);
 
-    var h = line('共 ' + f(feasible) + ' 組可行組合，以下為淨效益前 ' + f(ranked) + ' 名'
+    var h = line('這張表把本案「可以走的開發制度」與「該制度下可申請的容積獎勵項目」全部排列組合，'
+               + '依淨效益（多出來的可售坪與車位收入 − 多蓋的營建費 − 管銷稅費 − 取得獎勵的代價 − 多花的審議月數利息）排序。'
+               + '不符前提的制度排在最後；點任一列即改用該組合。');
+    var regs = isArr(m4.regimes) ? m4.regimes : [], rrows = [], j;
+    for (j = 0; j < regs.length; j++) {
+      rrows.push({ name: regs[j].name, ok: regs[j].feasible ? U().lamp('green', '可行') : U().lamp('red', '不可行'),
+                   why: regs[j].feasible ? (regs[j].warn.join('；') || '前提成立') : regs[j].why.join('；'),
+                   items: regs[j].items.filter(function (x) { return x.applicable; })
+                            .map(function (x) { return x.name + ' ' + TD.fmt.n(x.pct * 100, 1) + '%'; }).join('、') || '—' });
+    }
+    h += U().table([
+      { k: 'name', label: '制度' },
+      { k: 'ok', label: '可行性', html: true },
+      { k: 'why', label: '前提與原因', render: function (v) { return small(v, 44); } },
+      { k: 'items', label: '可申請項目與法定成數', render: function (v) { return small(v, 50); } }
+    ], rrows, { p: p, empty: '' });
+    h += line('共 ' + f(feasible) + ' 組可行組合，以下為淨效益前 ' + f(ranked) + ' 名'
                + (top.length > ranked ? '，末列為目前選用' : ''));
     if (!moneyOk) h += line('缺基準容積樓地板，取得成本與淨效益算不出來');
 
@@ -226,7 +238,6 @@ window.TD = window.TD || {};
       if (!hit || !TD.store || typeof TD.store.set !== 'function') return;
       if (hit.regimeId) TD.store.set(p, 'm4.regime', hit.regimeId);
       if (isArr(hit.itemIds)) TD.store.set(p, 'm4.picked', hit.itemIds.slice(0));
-      if (isNum(hit.tdrPct)) TD.store.set(p, 'm4.tdrPct', hit.tdrPct);
       if (typeof TD.recalc === 'function') TD.recalc();
       else if (typeof TD.render === 'function') TD.render();
     };
@@ -239,13 +250,14 @@ window.TD = window.TD || {};
   /* 樓層堆疊：地上逐層、地下逐層，寬度依每層面積。層數太多只畫前段並註明。*/
   function floorStack(mass) {
     var floors = rawNum(mass.floorsAbove);
-    var buildArea = rawNum(mass.buildAreaM2);
+    var buildArea = isNum(mass.plateM2) && mass.plateM2 > 0 ? mass.plateM2 : rawNum(mass.buildAreaM2);
     var basementM2 = rawNum(mass.basementM2);
     var height = rawNum(mass.heightM);
     if (floors === null || floors <= 0) return blank('缺地上層數，畫不出樓層堆疊');
     if (buildArea === null || buildArea <= 0) return blank('缺建築面積，畫不出樓層堆疊');
 
-    var bLevels = (basementM2 !== null && basementM2 > 0) ? Math.ceil(basementM2 / buildArea) : 0;
+    var bLevels = isNum(mass.basementLevels) ? mass.basementLevels
+      : ((basementM2 !== null && basementM2 > 0) ? Math.ceil(basementM2 / buildArea) : 0);
     var drawAbove = Math.min(floors, 24);
     var drawBelow = Math.min(bLevels, 4);
 
@@ -315,10 +327,14 @@ window.TD = window.TD || {};
       ['公設比', n(m5.publicRatio, 'pct', 1)],
       ['戶數', n(m5.unitsCount, 'n', 0)],
       ['車位數', n(m5.stalls, 'n', 0)],
-      ['法定應設車位', isNum(m5.parkingRequired) ? esc(f(m5.parkingRequired)) : dash()],
+      ['法定應設／銷售需要', esc(f(m5.stallsLegal)) + ' ／ ' + esc(f(m5.stallsMarket)) + ' 位'],
       ['地上層數', n(m5.floorsAbove, 'n', 0)],
-      ['建築高度 m', n(m5.heightM, 'n', 1)]
+      ['地下室層數', isNum(m5.basementLevels) ? esc(f(m5.basementLevels)) : dash()],
+      ['建築高度 m', n(m5.heightM, 'n', 1)],
+      ['標準層面積', isNum(m5.plateM2) ? esc(TD.fmt.area(m5.plateM2, p && p.units === 'm2' ? 'm2' : 'ping', 1)) : dash()]
     ], { cls: 'two' });
+    if (isObj(m5.heightCheck) && m5.heightCheck.note) h += line(m5.heightCheck.note);
+    if (m5.avgUnitPingFrom) h += line('每戶坪數：' + m5.avgUnitPingFrom + '；配車位：' + (m5.stallRatioFrom || ''));
 
     h += floorStack(m5);
     if (m5.legalWarning) h += U().noteText('warn', firstSentence(m5.legalWarning));
@@ -329,7 +345,8 @@ window.TD = window.TD || {};
      4. 比價明細（方法一行、drivers、案例表、散佈圖）
      ------------------------------------------------------------------ */
 
-  var METHOD_ZH = { hedonic: '特徵價格回歸', weighted: '加權比價', manual: '人工指定', median: '中位數' };
+  var METHOD_ZH = { district: '本區實價登錄預售成交中位數', hedonic: '特徵價格回歸（匯入案例）',
+                    weighted: '逐筆調整加權（匯入案例）', manual: '使用者指定單價', none: '尚無單價（請匯入案例或指定單價）' };
 
   function methodLine(m6) {
     var t = '方法 ' + (METHOD_ZH[m6.method] || (m6.method ? String(m6.method) : '—'));
@@ -345,12 +362,25 @@ window.TD = window.TD || {};
     function n(v, fmt, d) { return U().num(v, { fmt: fmt, d: d, p: p }); }
 
     var h = methodLine(m6);
-    if (m6.compIsSample) h += line('案例來源 ' + clip(m6.compSource, 44) + '，不是實價登錄');
-    else if (m6.compSource) h += line('案例來源 ' + clip(m6.compSource, 44));
-    if (isNum(m6.compSkipped) && m6.compSkipped > 0) h += line('欄位不全未採用 ' + f(m6.compSkipped) + ' 筆');
+    if (m6.compSource) h += line('資料來源 ' + clip(m6.compSource, 90));
+    var mk = isObj(m6.market) ? m6.market : {};
+    if (isObj(mk.meta)) h += line('內政部實價登錄開放資料，交易期間 ' + mk.meta.from + '～' + mk.meta.to + '，單價已扣除車位價格與車位面積');
+
+    var pre = isObj(mk.presale) ? mk.presale : null, rs = isObj(mk.resale) ? mk.resale : null;
+    function wq(o) {
+      if (!o) return dash();
+      return esc(TD.fmt.n(o.p25 / 1e4, 1) + '／' + TD.fmt.n(o.p50 / 1e4, 1) + '／' + TD.fmt.n(o.p75 / 1e4, 1) + ' 萬（' + f(o.n) + ' 筆）');
+    }
+    h += U().kv([
+      ['本區預售（25%／中位／75%）', pre ? wq(pre) : dash()],
+      ['本區新成屋 5 年內', rs && rs.newer ? wq(rs.newer) : dash()],
+      ['本區全部成屋', rs && rs.all ? wq(rs.all) + esc(isNum(rs.all.ageMed) ? '，屋齡中位數 ' + f(rs.all.ageMed, 0) + ' 年' : '') : dash()],
+      ['車位單價', isNum(m6.parkingPricePerStall) ? esc(TD.fmt.n(m6.parkingPricePerStall / 1e4, 0) + ' 萬／位') + small('　' + (m6.parkingFrom || ''), 30) : dash()],
+      ['去化速度', isNum(m6.absorbPerMonth) ? esc(f(m6.absorbPerMonth, 1) + ' 戶／月') + small('　' + (m6.absorbFrom || ''), 30) : dash()]
+    ], { cls: 'two' });
 
     h += U().kv([
-      ['成屋單價', n(m6.unitPricePing, 'unitPrice')],
+      ['採用單價', n(m6.unitPricePing, 'unitPrice')],
       ['單價區間', n(m6.loPing, 'unitPrice') + ' ～ ' + n(m6.hiPing, 'unitPrice')],
       ['預售單價', n(m6.presalePricePing, 'unitPrice')],
       ['房屋銷售收入', n(m6.salesRevenue, 'money')],
@@ -360,27 +390,75 @@ window.TD = window.TD || {};
       ['每月去化戶數', isNum(m6.absorbPerMonth) ? esc(f(m6.absorbPerMonth, 1)) : dash()]
     ], { cls: 'two' });
 
-    h += U().scatter(m6.comps, rawNum(m6.unitPricePing));
+    if (m6.method === 'district') {
+      h += U().scatter(m6.comps, rawNum(m6.unitPricePing), {
+        x: function (c) { return isNum(c.ym) ? Math.floor(c.ym / 100) * 12 + (c.ym % 100) - 1 : null; },
+        xLabel: '成交年月',
+        xTick: function (v) { return Math.floor(v / 12) + '/' + ('0' + (v % 12 + 1)).slice(-2); }
+      });
+    } else {
+      h += U().scatter(m6.comps, rawNum(m6.unitPricePing));
+    }
 
-    h += U().table([
-      { k: 'name', label: '變數' },
-      { k: 'coef', label: '係數', align: 'r', fmt: 'n', d: 4, plain: true },
-      { k: 'effect', label: '影響', render: function (v) { return small(v, 44); } }
-    ], isArr(m6.drivers) ? m6.drivers : [], { p: p, empty: '沒有變數影響可列。' });
+    if (isArr(m6.drivers) && m6.drivers.length) {
+      h += U().table([
+        { k: 'name', label: '變數' },
+        { k: 'coef', label: '係數', align: 'r', fmt: 'n', d: 4, plain: true },
+        { k: 'effect', label: '影響', render: function (v) { return small(v, 44); } }
+      ], m6.drivers, { p: p, empty: '' });
+    }
 
-    h += '<div class="tall">' + U().table([
-      { k: 'addr', label: '位置', render: function (v) { return small(v, 18); } },
+    var district = m6.method === 'district';
+    var cols = [
+      { k: 'ymLabel', label: '成交年月' },
+      { k: 'addr', label: '路段', render: function (v) { return small(v, 12); } },
+      { k: 'project', label: '建案', render: function (v) { return small(v, 12); } },
       { k: 'type', label: '類型' },
       { k: 'unitPricePing', label: '單價', fmt: 'unitPrice', align: 'r', plain: true },
       { k: 'areaPing', label: '坪', fmt: 'n', d: 1, align: 'r', plain: true },
-      { k: 'ageYears', label: '屋齡', align: 'r' },
-      { k: 'floor', label: '樓層', align: 'r' },
-      { k: 'distanceM', label: '距離 m', align: 'r' },
-      { k: 'adjPrice', label: '調整後單價', fmt: 'unitPrice', align: 'r', plain: true },
-      { k: 'weightPct', label: '權重', fmt: 'pct', d: 1, align: 'r', plain: true },
-      { k: 'residPct', label: '殘差', fmt: 'pct', d: 1, align: 'r', plain: true }
-    ], isArr(m6.comps) ? m6.comps : [], { p: p, empty: '沒有比較案例。' }) + '</div>';
+      { k: 'floor', label: '樓層', align: 'r', render: function (v, r) {
+        return isNum(v) ? esc(f(v) + (isNum(r.totalFloors) && r.totalFloors > 0 ? '／' + f(r.totalFloors) : '')) : dash();
+      } }
+    ];
+    if (!district) {
+      cols.push({ k: 'ageYears', label: '屋齡', align: 'r' });
+      cols.push({ k: 'adjPrice', label: '調整後單價', fmt: 'unitPrice', align: 'r', plain: true });
+      cols.push({ k: 'weightPct', label: '權重', fmt: 'pct', d: 1, align: 'r', plain: true });
+      cols.push({ k: 'residPct', label: '殘差', fmt: 'pct', d: 1, align: 'r', plain: true });
+    }
+    h += '<div class="tall">' + U().table(cols, isArr(m6.comps) ? m6.comps : [], { p: p, empty: '沒有比較案例。' }) + '</div>';
 
+    return h;
+  }
+
+  /* ------------------------------------------------------------------
+     4b. 土地行情（本區同分區土地實價登錄）
+     ------------------------------------------------------------------ */
+
+  function landBlock(ctx, p) {
+    var m8 = seg(ctx, 'm8'), m6 = seg(ctx, 'm6');
+    var bm = (m8 && isObj(m8.benchmark)) ? m8.benchmark : null;
+    var land = (m6 && isObj(m6.market) && isObj(m6.market.land)) ? m6.market.land : null;
+    if (!land) return blank('本區與全市查無同分區土地成交（或行情檔尚未載入）');
+    var h = line(land.label);
+    h += U().kv([
+      ['採用行情', esc(TD.fmt.n(land.perPing / 1e4, 1) + ' 萬／坪')],
+      ['25%／中位／75%', esc(TD.fmt.n(land.p25 / 1e4, 1) + '／' + TD.fmt.n(land.p50 / 1e4, 1) + '／' + TD.fmt.n(land.p75 / 1e4, 1) + ' 萬')],
+      ['出價上限每坪', bm && isNum(bm.capVsMarket) ? esc(TD.fmt.n(bm.capVsMarket * bm.perPing / 1e4, 1) + ' 萬（行情的 ' + TD.fmt.n(bm.capVsMarket * 100, 0) + '%）') : dash()],
+      ['以行情價買入', bm && isNum(bm.marginAtMarket) ? esc('淨利率 ' + TD.fmt.pct(bm.marginAtMarket, 1) + (isNum(bm.irrAtMarket) ? '、IRR ' + TD.fmt.pct(bm.irrAtMarket, 1) : '')) : dash()]
+    ], { cls: 'two' });
+    var rows = isArr(land.comps) ? land.comps.map(function (c) {
+      return { ym: isNum(c.ym) ? Math.floor(c.ym / 100) + '/' + ('0' + (c.ym % 100)).slice(-2) : '', addr: c.addr,
+               areaPing: c.areaPing, unitPricePing: c.unitPricePing, zoneText: c.zoneText, district: c.district };
+    }) : [];
+    h += '<div class="tall">' + U().table([
+      { k: 'ym', label: '成交年月' },
+      { k: 'district', label: '行政區' },
+      { k: 'addr', label: '地段' },
+      { k: 'areaPing', label: '坪', fmt: 'n', d: 1, align: 'r', plain: true },
+      { k: 'unitPricePing', label: '單價', fmt: 'unitPrice', align: 'r', plain: true },
+      { k: 'zoneText', label: '使用分區', render: function (v) { return small(v, 18); } }
+    ], rows, { p: p, empty: '沒有案例。' }) + '</div>';
     return h;
   }
 
@@ -559,14 +637,14 @@ window.TD = window.TD || {};
     var m3 = seg(ctx, 'm3');
     if (!m3) return '';
     var checks = isArr(m3.checks) ? m3.checks : [];
-    var fail = 0, manual = 0, i;
+    var fail = 0, warn = 0, i;
     for (i = 0; i < checks.length; i++) {
       if (checks[i].status === 'fail') fail += 1;
-      else if (checks[i].status === 'manual') manual += 1;
+      else if (checks[i].status === 'warn') warn += 1;
     }
     var parts = [];
     if (fail) parts.push('不通過 ' + f(fail));
-    if (manual) parts.push('算不出來 ' + f(manual));
+    if (warn) parts.push('注意 ' + f(warn));
     if (!parts.length) parts.push('共 ' + f(checks.length) + ' 項');
     return parts.join('　');
   }
@@ -583,6 +661,12 @@ window.TD = window.TD || {};
     if (!m5) return '';
     var sp = rawNum(m5.sellablePing);
     return (sp === null) ? '' : '可售 ' + f(sp, 1) + ' 坪';
+  }
+
+  function landSub(ctx) {
+    var m8 = seg(ctx, 'm8');
+    var bm = (m8 && isObj(m8.benchmark)) ? m8.benchmark : null;
+    return bm ? TD.fmt.n(bm.perPing / 1e4, 1) + ' 萬／坪' : '';
   }
 
   function compsSub(ctx) {
@@ -619,7 +703,8 @@ window.TD = window.TD || {};
     h += U().sec('d-reg', '法規檢討明細', regBlock(ctx, p), open('d-reg'), { sub: regSub(ctx) });
     h += U().sec('d-bonus', '容積獎勵組合排行', bonusBlock(ctx, p), open('d-bonus'), { sub: bonusSub(ctx) });
     h += U().sec('d-mass', '量體明細', massBlock(ctx, p), open('d-mass'), { sub: massSub(ctx) });
-    h += U().sec('d-comps', '比價明細', compsBlock(ctx, p), open('d-comps'), { sub: compsSub(ctx) });
+    h += U().sec('d-comps', '比價明細（實價登錄）', compsBlock(ctx, p), open('d-comps'), { sub: compsSub(ctx) });
+    h += U().sec('d-land', '土地行情（實價登錄）', landBlock(ctx, p), open('d-land'), { sub: landSub(ctx) });
     h += U().sec('d-cost', '成本結構', costBlock(ctx, p), open('d-cost'), { sub: costSub(ctx) });
     h += U().sec('d-cash', '現金流', cashBlock(ctx, p, open), open('d-cash'), { sub: cashSub(ctx) });
     return h;
@@ -628,7 +713,7 @@ window.TD = window.TD || {};
   TD.ui.renderDetails = renderDetails;
   TD.ui.detailsUtil = {
     regBlock: regBlock, bonusBlock: bonusBlock, massBlock: massBlock,
-    compsBlock: compsBlock, costBlock: costBlock, cashBlock: cashBlock,
+    compsBlock: compsBlock, landBlock: landBlock, costBlock: costBlock, cashBlock: cashBlock,
     floorStack: floorStack, sCurveChart: sCurveChart
   };
 })(window.TD);

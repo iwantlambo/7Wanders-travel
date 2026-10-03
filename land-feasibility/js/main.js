@@ -158,8 +158,47 @@ window.TD = window.TD || {};
 
   /* ===================== 3. 重算與重繪 ===================== */
 
+  /* ===================== 實價登錄行情檔：依縣市延遲載入 =====================
+     22 縣市的行情檔合計約 2 MB，只載入目前專案所在的縣市（js/data/lvr/{代碼}.js，同網站的靜態檔，
+     不是外部 API）。載入完成後自動重算；載入失敗時比價退回保守單價並在左欄提示。*/
+  var LVR = { loading: {}, failed: {} };
+
+  function lvrState(county) {
+    var L = TD.data && TD.data.lvr;
+    if (L && L.loaded && L.loaded(county)) return 'loaded';
+    if (LVR.loading[county]) return 'loading';
+    if (LVR.failed[county]) return 'failed';
+    return '';
+  }
+
+  function ensureLvr(county) {
+    var L = TD.data && TD.data.lvr, code, el, head;
+    if (!L || !county || !L.codeOf || lvrState(county)) return;
+    code = L.codeOf(county);
+    if (!code) return;
+    try {
+      el = document.createElement('script');
+      el.src = 'js/data/lvr/' + code + '.js';
+      el.async = true;
+      el.onload = function () { LVR.loading[county] = false; refresh(); };
+      el.onerror = function () { LVR.loading[county] = false; LVR.failed[county] = true; refresh(); };
+      head = document.getElementsByTagName('head')[0] || document.body;
+      LVR.loading[county] = true;
+      head.appendChild(el);
+    } catch (e) { LVR.failed[county] = true; }
+  }
+
+  /* 縣市改了而行政區不屬於新縣市時清空行政區，避免拿 A 縣市的區去查 B 縣市的行情 */
+  function normalizeSite() {
+    var pc = S.p && S.p.parcel, dd = TD.data && TD.data.districts;
+    if (!pc || !dd || !dd.has) return;
+    if (pc.district && !dd.has(pc.city, pc.district)) TD.store.set(S.p, 'parcel.district', '');
+  }
+
   function recalc() {
     S.runError = null;
+    try { normalizeSite(); } catch (e0) {}
+    if (S.p && S.p.parcel) ensureLvr(S.p.parcel.city);
     if (!TD.engine || typeof TD.engine.run !== 'function') {
       S.runError = '計算引擎未載入，請檢查 index.html 的 script 清單。';
     } else {
@@ -861,10 +900,17 @@ window.TD = window.TD || {};
 
   /* ---- 開發方式 ---- */
 
+  /* 勾選獎勵項目：自動模式下第一次勾選，以目前採用的組合為起點改成「指定制度與項目」 */
   TD.actions.pickToggle = function (el) {
-    var id = el.getAttribute('data-id');
-    if (!id) return;
-    var cur = (S.p && S.p.m4 && isArr(S.p.m4.picked)) ? S.p.m4.picked.slice(0) : [];
+    var id = el.getAttribute('data-id'), reg = el.getAttribute('data-reg');
+    if (!id || !reg) return;
+    var m4 = S.ctx && S.ctx.m4, cur;
+    if (S.p.m4.regime !== reg) {
+      cur = (m4 && isObj(m4.chosen) && m4.chosen.regimeId === reg) ? m4.chosen.itemIds.slice(0) : [];
+      TD.store.set(S.p, 'm4.regime', reg);
+    } else {
+      cur = isArr(S.p.m4.picked) ? S.p.m4.picked.slice(0) : [];
+    }
     var at = cur.indexOf(id);
     if (el.checked && at < 0) cur.push(id);
     else if (!el.checked && at >= 0) cur.splice(at, 1);
@@ -873,18 +919,89 @@ window.TD = window.TD || {};
   };
 
   TD.actions.applyBest = function () {
-    var best = (S.ctx && S.ctx.m4 && isObj(S.ctx.m4.best)) ? S.ctx.m4.best : null;
-    if (!best) { say('目前沒有可行的獎勵組合。'); return; }
-    if (best.regimeId) TD.store.set(S.p, 'm4.regime', best.regimeId);
-    if (isArr(best.itemIds)) TD.store.set(S.p, 'm4.picked', best.itemIds.slice(0));
-    if (isNum(best.tdrPct)) TD.store.set(S.p, 'm4.tdrPct', best.tdrPct);
+    TD.store.set(S.p, 'm4.regime', 'AUTO');
+    TD.store.set(S.p, 'm4.picked', []);
     refresh();
   };
 
   /* ---- 比價資料 CSV ---- */
 
-  /* 一行一筆：單價,坪數,屋齡,樓層,距離m。缺格就留 0，不猜。*/
+  /* 中文數字樓層（「十二層」「地下一層」）→ 數字 */
+  function zhFloor(t) {
+    var s = String(t || ''), m, d = { '一': 1, '二': 2, '三': 3, '四': 4, '五': 5, '六': 6, '七': 7, '八': 8, '九': 9 }, n = 0;
+    if (/地下/.test(s)) return 0;
+    m = s.match(/(\d+)/);
+    if (m) return Number(m[1]);
+    m = s.match(/([一二三四五六七八九]?)(十?)([一二三四五六七八九]?)層/);
+    if (!m) return 0;
+    if (m[2]) n = (m[1] ? d[m[1]] : 1) * 10 + (m[3] ? d[m[3]] : 0);
+    else n = m[1] ? d[m[1]] : (m[3] ? d[m[3]] : 0);
+    return n;
+  }
+
+  function splitCsvLine(line) {
+    var out = [], cur = '', q = false, i, c;
+    for (i = 0; i < line.length; i++) {
+      c = line.charAt(i);
+      if (c === '"') { if (q && line.charAt(i + 1) === '"') { cur += '"'; i++; } else q = !q; }
+      else if ((c === ',' || c === '\t') && !q) { out.push(cur); cur = ''; }
+      else cur += c;
+    }
+    out.push(cur);
+    return out;
+  }
+
+  /* 內政部實價登錄下載的 CSV（第一列中文表頭、第二列英文表頭）：
+     單價（不含車位）＝（總價 − 車位總價）÷（建物移轉面積 − 車位面積）；排除親友、員工、特殊關係等交易。*/
+  function parseLvrCsv(lines) {
+    var head = splitCsvLine(lines[0]), ix = {}, i, out = [], r, g, total, park, area, parkA, ping, ym, built, age, note, tx;
+    for (i = 0; i < head.length; i++) ix[trim(head[i]).replace(/^\uFEFF/, '')] = i;
+    g = function (row, k) { return hasOwn(ix, k) ? trim(row[ix[k]] || '') : ''; };
+    if (!hasOwn(ix, '總價元')) return null;
+    for (i = 1; i < lines.length; i++) {
+      if (!trim(lines[i])) continue;
+      r = splitCsvLine(lines[i]);
+      if (/^the /i.test(r[0] || '') || r[0] === 'The villages and towns urban district') continue;
+      tx = g(r, '交易標的');
+      if (tx && tx.indexOf('建物') < 0) continue;
+      note = g(r, '備註');
+      if (/親友|員工|特殊關係|二親等|債權債務|瑕疵|急買急賣|含增建|公共設施保留地/.test(note)) continue;
+      total = Number(g(r, '總價元')) || 0;
+      park = Number(g(r, '車位總價元')) || 0;
+      area = Number(g(r, '建物移轉總面積平方公尺')) || 0;
+      parkA = Number(g(r, '車位移轉總面積(平方公尺)') || g(r, '車位移轉總面積平方公尺')) || 0;
+      if (!(total > 0) || !(area - parkA > 3)) continue;
+      ping = (area - parkA) / TD.PING;
+      ym = g(r, '交易年月日');
+      built = g(r, '建築完成年月');
+      age = 0;
+      if (/^\d{6,7}$/.test(ym) && /^\d{5,7}$/.test(built)) {
+        age = Math.max(0, (Number(ym.slice(0, ym.length - 4)) - Number(built.slice(0, built.length - (built.length >= 7 ? 4 : 2)))));
+      }
+      out.push({
+        id: 'u' + (out.length + 1), addr: g(r, '土地位置建物門牌').replace(/^.+?[市縣]/, '').slice(0, 24),
+        district: g(r, '鄉鎮市區'), type: g(r, '建物型態').replace(/\(.*$/, ''),
+        unitPricePing: Math.round((total - park) / ping),
+        areaPing: Math.round(ping * 10) / 10,
+        ageYears: age,
+        floor: zhFloor(g(r, '移轉層次')),
+        totalFloors: zhFloor(g(r, '總樓層數')),
+        distanceM: 0,
+        year: /^\d{6,7}$/.test(ym) ? Number(ym.slice(0, ym.length - 4)) + 1911 : 0,
+        ym: /^\d{6,7}$/.test(ym) ? (Number(ym.slice(0, ym.length - 4)) + 1911) * 100 + Number(ym.slice(-4, -2)) : null
+      });
+    }
+    return out;
+  }
+
+  /* 一行一筆：單價,坪數,屋齡,樓層,距離m。缺格就留 0，不猜。
+     第一列含「總價元」時視為內政部實價登錄 CSV 原檔。*/
   function parseComps(text) {
+    var all = String(text || '').split(/\r?\n/);
+    if (all.length && /總價元/.test(all[0])) {
+      var lv = parseLvrCsv(all);
+      if (lv) return lv;
+    }
     var lines = String(text || '').split(/\r?\n/), out = [], i, parts, n;
     for (i = 0; i < lines.length; i++) {
       if (!trim(lines[i])) continue;
@@ -911,12 +1028,13 @@ window.TD = window.TD || {};
     var rows = parseComps(ta.value);
     if (!rows.length) { say('沒有讀到任何一筆可用的成交資料（第一欄必須是單價）。'); return; }
     TD.store.set(S.p, 'm6.comps', rows);
-    TD.store.set(S.p, 'm6.useSampleComps', false);
+    TD.store.set(S.p, 'm6.compSource', 'custom');
     refresh();
   };
 
   TD.actions.compsClear = function () {
     TD.store.set(S.p, 'm6.comps', []);
+    TD.store.set(S.p, 'm6.compSource', 'district');
     refresh();
   };
 
@@ -1153,7 +1271,7 @@ window.TD = window.TD || {};
 
   /* 對外（測試用；不是契約的一部分） */
   TD.app = { boot: boot, refresh: refresh, recalc: recalc, render: render, state: S,
-    parseComps: parseComps };
+    parseComps: parseComps, lvrState: lvrState, ensureLvr: ensureLvr };
 
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', boot, false);

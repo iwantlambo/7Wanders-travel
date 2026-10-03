@@ -15,7 +15,8 @@ window.TD = window.TD || {};
   function esc(s) { return TD.ui.esc(s); }
 
   var DISCLAIMER = '本報告為初步判斷，不具法律效力。量體與法規檢討須由開業建築師簽證；'
-    + '產權須由地政士或律師確認；比價與成本資料含種子值，未逐項查證前不得作為對外報價依據。'
+    + '產權須由地政士或律師確認；售價與土地行情取自內政部實價登錄開放資料（內建資料的交易期間見比價明細），'
+    + '營建成本為 2026 年第三季行情，正式出價前請以最新實價登錄與發包報價更新。'
     + '所有運算於使用者本機瀏覽器內完成，資料不上傳任何伺服器。';
 
   function h2(t) { return '<h2>' + esc(t) + '</h2>'; }
@@ -31,38 +32,30 @@ window.TD = window.TD || {};
     return U().resultsUtil.stressBlock(ctx, p);
   }
 
-  /* ------------------------------------------------------------------ 走人價
-     走人價是「談到這個價就走」的那條線，來源與 IRR 門檻一定要寫出來：
-     引擎在回推無解時會改用替代算法，那種走人價偏寬鬆，看的人必須知道。
+  /* ------------------------------------------------------------------ 出價（走人價與建議出價）
+     走人價＝出價上限：超過就達不到報酬目標的最高地價；建議出價＝再保留 3 個百分點報酬緩衝的談判目標。
      三個損益兩平緩衝放在同一節：它們回答的是同一個問題——還剩多少餘裕。*/
 
-  function walkAwaySection(ctx, p) {
+  function bidSection(ctx, p) {
     var m8 = (ctx && isObj(ctx.m8)) ? ctx.m8 : null;
-    if (!m8 || m8.error) return '<p class="legal">財務計算未完成，走人價尚無法計算。</p>';
-
-    var w = rawNum(m8.walkAway), cap = rawNum(m8.landCap);
+    if (!m8 || m8.error) return '<p class="legal">財務計算未完成，出價尚無法計算。</p>';
+    var cap = rawNum(m8.landCap), bid = rawNum(m8.bidTarget);
     var rows = [];
-
-    rows.push({ k: '走人價（土地總價）', v: m8.walkAway, fmt: 'money' });
-    if (w !== null && cap !== null) {
-      rows.push({ k: '與出價上限的差距', v: cap - w, fmt: 'money', plain: true,
-        sub: '出價上限 ' + TD.fmt.money(cap) });
-    } else {
-      rows.push({ k: '與出價上限的差距', v: '尚無法計算',
-        sub: cap === null ? '出價上限無解' : '走人價無解' });
+    rows.push({ k: '走人價（出價上限，土地總價）', v: m8.landCap, fmt: 'money' });
+    rows.push({ k: '建議出價（談判目標）', v: m8.bidTarget, fmt: 'money' });
+    if (bid !== null && cap !== null) {
+      rows.push({ k: '保留的議價空間', v: cap - bid, fmt: 'money', plain: true });
     }
-    if (isNum(m8.walkAwayIrrTarget)) {
-      rows.push({ k: '走人價採用的年化 IRR 門檻', v: m8.walkAwayIrrTarget, fmt: 'pct', d: 1, plain: true });
+    if (isObj(m8.benchmark)) {
+      rows.push({ k: '本區同分區土地行情（每坪）', v: m8.benchmark.perPing, fmt: 'unitPrice', plain: true,
+        sub: m8.benchmark.label });
     }
-
     var h = U().kv(rows, { p: p });
-    h += '<p class="legal">走人價來源：<b>' + U().zhEsc(m8.walkAwayFrom || '來源未填') + '</b>'
-       + (m8.walkAwayStatus ? '　求解狀態 ' + esc(String(m8.walkAwayStatus)) : '') + '</p>';
+    h += '<p class="legal">建議出價依據：<b>' + U().zhEsc(m8.bidFrom || '—') + '</b></p>';
+    if (isObj(m8.benchmark) && m8.benchmark.verdict) h += '<p class="legal">' + U().zhEsc(m8.benchmark.verdict) + '</p>';
 
-    /* 損益兩平緩衝：與走人價回答同一個問題——還剩多少餘裕。
-       利率那一列內部存的是小數的「個百分點」，用 pp 格式輸出、單位寫在標籤裡。*/
     var be = isObj(m8.breakeven) ? m8.breakeven : null;
-    if (!be) return h + '<p class="legal">沒有損益兩平緩衝資料。</p>';
+    if (!be) return h;
     h += U().kv([
       { k: '售價可跌幅度（損益兩平）', v: be.priceDropPct, fmt: 'pct', d: 1 },
       { k: '營建成本可漲幅度（損益兩平）', v: be.costRisePct, fmt: 'pct', d: 1 },
@@ -144,8 +137,8 @@ window.TD = window.TD || {};
     h += h2('壓力測試');
     h += stressSection(ctx, p);
 
-    h += h2('走人價');
-    h += walkAwaySection(ctx, p);
+    h += h2('出價：走人價與建議出價');
+    h += bidSection(ctx, p);
 
     h += h2('法規檢討明細');
     h += D.regBlock(ctx, p);
@@ -156,8 +149,11 @@ window.TD = window.TD || {};
     h += h2('量體明細');
     h += D.massBlock(ctx, p);
 
-    h += h2('比價明細');
+    h += h2('比價明細（實價登錄）');
     h += D.compsBlock(ctx, p);
+
+    h += h2('土地行情（實價登錄）');
+    h += D.landBlock(ctx, p);
 
     h += h2('成本結構');
     h += D.costBlock(ctx, p);

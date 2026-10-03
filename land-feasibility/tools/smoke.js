@@ -1,4 +1,4 @@
-/* tools/smoke.js —— 二十項斷言。
+/* tools/smoke.js —— 二十八項斷言。
    1～8 是 SPEC 第 9 節的前八項；
    9～11 原本查三個客戶版本的頭條數字與投影片，版本機制已移除，改查
    m8.stress（四項齊全、判定合法）、m8.walkAway（非 NaN 且不高於出價上限）
@@ -10,6 +10,9 @@
    19 報告層必須組得出來且含免責聲明（曾因少傳一個參數整層變白磚）、
    20 渲染後的介面文字不得出現模組代號、NaN，空專案不得以 0 冒充算不出來。
    13～20 都是對抗審查抓到的真實錯誤留下的迴歸防線，不要放寬。
+   21～28 是 2026-10 使用者回報（新北市三重區幸福段、乙種工業區 5 筆 1,618 ㎡）留下的防線：
+   比價不得再拿大安區、工業區不得當住宅估、不得預設危老、行政區要能選、
+   第二類謄本要能判讀、介面不得出現「待查證」「算不出來」。
    零相依，直接 node tools/smoke.js。
    做法：假一個 global.window，依序載入 js/lib → js/data → js/engine，
    用 TD.store.sample() 跑 TD.engine.run(p)，逐項印 PASS／FAIL。
@@ -28,26 +31,20 @@ var ROOT = path.resolve(__dirname, '..');
        這是刻意的：SPEC 第 1 節第 7 款要求引擎是純函式。 ---- */
 global.window = global.window || {};
 
-var LOAD = [
-  'js/lib/fmt.js',
-  'js/lib/value.js',
-  'js/lib/math.js',
-  'js/lib/store.js',
-  'js/data/laws.js',
-  'js/data/zoning.js',
-  'js/data/bonus.js',
-  'js/data/cost.js',
-  'js/data/comps.js',
-  'js/engine/m1.js',
-  'js/engine/m2.js',
-  'js/engine/m3.js',
-  'js/engine/m4.js',
-  'js/engine/m5.js',
-  'js/engine/m6.js',
-  'js/engine/m7.js',
-  'js/engine/m8.js',
-  'js/engine/pipeline.js'
-];
+/* 載入順序以 index.html 的 script 清單為準（介面層與 main.js 除外），
+   避免測試載入的檔案與網站實際載入的不同步。實價登錄行情檔是網站依縣市延遲載入的，
+   這裡直接載入示範專案（臺北市 A）與回報案例（新北市 F）兩個縣市。*/
+var LOAD = (function () {
+  var html = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
+  var m = html.match(/src="(js\/[^"]+)"/g) || [], out = [], i, rel;
+  for (i = 0; i < m.length; i++) {
+    rel = m[i].slice(5, -1);
+    if (rel.indexOf('js/ui/') === 0 || rel === 'js/main.js') continue;
+    out.push(rel);
+  }
+  out.push('js/data/lvr/A.js', 'js/data/lvr/F.js');
+  return out;
+})();
 
 /* ---- 介面層（js/ui/*.js）另外載入：引擎的斷言不需要它，
        第 19、20 項才需要。它們在頂層不碰 document，所以在 Node 下載得起來。---- */
@@ -158,7 +155,7 @@ if (ctx.errors && ctx.errors.length) {
   console.log('');
 }
 
-console.log('=== smoke：二十項斷言 ===');
+console.log('=== smoke：二十八項斷言 ===');
 console.log('示範專案：' + p.name);
 
 /* ---- 1. m3.baseFloorM2 為正，且等於面積 × 容積率 ---- */
@@ -178,26 +175,21 @@ check(1, 'ctx.m3.baseFloorM2 為正且等於 面積 × 容積率', function () {
   return { ok: true, detail: fmtNum(area) + ' ㎡ × ' + fmtNum(far) + ' = ' + fmtNum(base) + ' ㎡' };
 });
 
-/* ---- 2. m4.options 非空，且 chosen.pct <= regime.capOfBase + tdrCap + 1e-9 ---- */
-check(2, 'ctx.m4.options 非空，且 chosen.pct 不超過制度上限 ＋ 容積移轉上限', function () {
+/* ---- 2. m4.options 非空，且 chosen.pct 不超過該制度各桶上限之和（有總額上限者不超過總額）---- */
+check(2, 'ctx.m4.options 非空，且 chosen.pct 不超過制度上限', function () {
   var m4 = ctx.m4;
   if (!m4 || m4.error) return { ok: false, detail: 'm4 未產出：' + (m4 && m4.error) };
   if (!m4.options || !m4.options.length) return { ok: false, detail: 'options 長度為 0' };
   var chosen = m4.chosen;
   if (!chosen) return { ok: false, detail: 'chosen 為空' };
-  var bd = TD.data.bonus, i, regime = null;
-  for (i = 0; i < bd.regimes.length; i++) if (bd.regimes[i].id === chosen.regimeId) regime = bd.regimes[i];
+  var regime = TD.data.bonus.regimeById(chosen.regimeId);
   if (!regime) return { ok: false, detail: '找不到 chosen.regimeId = ' + chosen.regimeId + ' 的制度' };
-  var cap = (isNum(regime.capOfBase) ? regime.capOfBase : 0)
-          + (isNum(bd._meta.tdrCapOfBase) ? bd._meta.tdrCapOfBase : 0);
+  var caps = regime.caps || {}, k, cap = 0;
+  for (k in caps) if (Object.prototype.hasOwnProperty.call(caps, k) && k !== 'total') cap += caps[k];
+  if (isNum(caps.total)) cap = Math.min(cap, caps.total);
   if (!isNum(chosen.pct)) return { ok: false, detail: 'chosen.pct = ' + fmtNum(chosen.pct) };
-  if (chosen.pct > cap + 1e-9) {
-    return { ok: false, detail: 'chosen.pct ' + fmtNum(chosen.pct) + ' 超過上限 ' + fmtNum(cap)
-      + '（制度 ' + regime.id + ' capOfBase ' + fmtNum(regime.capOfBase)
-      + ' ＋ tdrCap ' + fmtNum(bd._meta.tdrCapOfBase) + '）' };
-  }
-  return { ok: true, detail: 'options ' + m4.options.length + ' 組，chosen ' + chosen.id
-    + ' pct ' + fmtNum(chosen.pct) + ' ≤ ' + fmtNum(cap) };
+  if (chosen.pct > cap + 1e-9) return { ok: false, detail: 'chosen.pct ' + fmtNum(chosen.pct) + ' 超過上限 ' + fmtNum(cap) };
+  return { ok: true, detail: 'options ' + m4.options.length + ' 組，chosen ' + chosen.id + ' pct ' + fmtNum(chosen.pct) + ' ≤ ' + fmtNum(cap) };
 });
 
 /* ---- 3. m5.sellablePing > 0 ---- */
@@ -315,22 +307,17 @@ check(9, 'ctx.m8.stress 四項齊全，每項 verdict 為 通過／警示／不�
   return { ok: true, detail: detail.join('、') };
 });
 
-/* ---- 10. m8.walkAway 非 NaN，且不高於出價上限 ----
-   走人價是「超過這個價就該離桌」的數字，比出價上限更嚴格，
-   算出一個比上限還高的走人價等於沒有底線。 */
-check(10, 'ctx.m8.walkAway 非 NaN，且不高於 ctx.m8.landCap', function () {
+/* ---- 10. 建議出價非 NaN，且不高於出價上限（走人價）----
+   走人價＝出價上限：超過就該離桌；建議出價是保留緩衝的談判目標，必須更低。 */
+check(10, 'ctx.m8.bidTarget 非 NaN，且不高於 ctx.m8.landCap（走人價）', function () {
   var m8 = ctx.m8;
   if (!m8 || m8.error) return { ok: false, detail: 'm8 未產出：' + (m8 && m8.error) };
-  if (!TD.isV(m8.walkAway)) return { ok: false, detail: 'walkAway 不是 V 包裝值' };
-  var w = raw(m8.walkAway), cap = raw(m8.landCap);
-  if (typeof w === 'number' && !isFinite(w)) return { ok: false, detail: 'walkAway 為 ' + String(w) };
-  if (!isNum(w)) return { ok: false, detail: 'walkAway 為 ' + fmtNum(w) + '（本案應算得出來）' };
+  if (!TD.isV(m8.bidTarget)) return { ok: false, detail: 'bidTarget 不是 V 包裝值' };
+  var w = raw(m8.bidTarget), cap = raw(m8.landCap);
+  if (!isNum(w)) return { ok: false, detail: 'bidTarget 為 ' + fmtNum(w) + '（本案應算得出來）' };
   if (!isNum(cap)) return { ok: false, detail: 'landCap 為 ' + fmtNum(cap) + '，無法比較' };
-  if (w > cap + 1e-6) {
-    return { ok: false, detail: 'walkAway ' + fmtNum(Math.round(w)) + ' 高於 landCap ' + fmtNum(Math.round(cap)) };
-  }
-  return { ok: true, detail: 'walkAway ' + fmtNum(Math.round(w)) + ' ≤ landCap ' + fmtNum(Math.round(cap))
-    + '（' + (m8.walkAwayFrom ? String(m8.walkAwayFrom).slice(0, 40) : '來源未填') + '…）' };
+  if (w > cap + 1e-6) return { ok: false, detail: 'bidTarget ' + fmtNum(Math.round(w)) + ' 高於 landCap ' + fmtNum(Math.round(cap)) };
+  return { ok: true, detail: '建議出價 ' + fmtNum(Math.round(w)) + ' ≤ 走人價 ' + fmtNum(Math.round(cap)) };
 });
 
 /* ---- 11. m8.scenarios 三情境齊全，樂觀的上限高於保守 ----
@@ -390,40 +377,31 @@ check(12, '清空 p.parcel.deedText 後 run() 不丟例外，且能安全降級'
     + ' 則、m2 燈號 ' + c3.m2.level + '、m8.landCap ' + fmtNum(cap === null ? null : Math.round(cap)) };
 });
 
-/* ---- 13. 迴歸防線：m6 拒絕估價時，m8 不准生出出價上限 ----
-   曾出現的錯：m6 因為沒有任何比較案例而明確拒絕估價（unitPricePing 為 null），
-   m7 卻用 TD.data.cost 的保守預設單價回落粗估出一個總銷，m8 再拿它回推出
-   一個六億多、看起來很精確的土地出價上限。那是用編出來的收入算出來的數字，
-   違反原則一。正確行為是整條鏈一路降級成 null，而不是補一個數字。 */
-check(13, 'm6 拒絕估價（無比較案例）時，m8.landCap／landCapPerPing／walkAway 一律為 null，不得生出數字', function () {
-  var p4 = TD.store.sample();
-  p4.m6.useSampleComps = false;
-  p4.m6.comps = [];
-  var c4;
-  try {
-    c4 = TD.engine.run(p4);
-  } catch (e) {
-    return { ok: false, detail: 'run() 丟出例外：' + (e && e.message ? e.message : e) };
-  }
+/* 暫時拿掉某縣市的行情檔（模擬網站上行情檔尚未載入或載入失敗），跑完再放回去 */
+function withoutLvr(city, fn) {
+  var L = TD.data.lvr, keep = L.counties[city];
+  delete L.counties[city];
+  try { return fn(); } finally { if (keep) L.counties[city] = keep; }
+}
+
+/* ---- 13. 迴歸防線：沒有任何行情資料時，不准用預設單價編出出價上限 ----
+   曾出現的錯：沒有比較案例時以保守預設單價回落粗估總銷，m8 再拿它回推出一個
+   看起來很精確的土地出價上限。正確行為是整條鏈一路降級成 null，並說明要補什麼。 */
+check(13, '無行情資料（行情檔未載入、無匯入案例、無指定單價）時，單價、出價上限與建議出價一律為 null', function () {
+  var c4 = withoutLvr('臺北市', function () { return TD.engine.run(TD.store.sample()); });
   var bad = [];
   if (!c4.m6 || c4.m6.error) return { ok: false, detail: 'm6 未產出：' + (c4.m6 && c4.m6.error) };
-  if (raw(c4.m6.unitPricePing) !== null) {
-    bad.push('前提不成立：無樣本時 m6.unitPricePing 應為 null，實際 ' + fmtNum(raw(c4.m6.unitPricePing)));
-  }
-  var cap = raw(c4.m8 && c4.m8.landCap);
-  if (cap !== null) bad.push('m8.landCap 應為 null，實際 ' + fmtNum(cap) + '（用回落單價編出來的收入回推，不可接受）');
-  /* 出價上限算不出來時，由它派生的每坪單價與走人價也必須一路 null。
-     這裡曾經是三個客戶版本的頭條數字，版本機制移除後改守這兩個派生值。 */
-  var heads = [['m8.landCapPerPing', c4.m8 && c4.m8.landCapPerPing],
-               ['m8.walkAway', c4.m8 && c4.m8.walkAway]];
+  if (raw(c4.m6.unitPricePing) !== null) bad.push('m6.unitPricePing 應為 null，實際 ' + fmtNum(raw(c4.m6.unitPricePing)));
+  var heads = [['m8.landCap', c4.m8 && c4.m8.landCap], ['m8.landCapPerPing', c4.m8 && c4.m8.landCapPerPing],
+               ['m8.bidTarget', c4.m8 && c4.m8.bidTarget]];
   var i, hv;
   for (i = 0; i < heads.length; i++) {
     hv = raw(heads[i][1]);
-    if (hv !== null) bad.push(heads[i][0] + ' 應為 null，實際 ' + fmtNum(hv));
+    if (hv !== null && hv !== undefined) bad.push(heads[i][0] + ' 應為 null，實際 ' + fmtNum(hv));
   }
   if (!c4.m8 || !c4.m8.notes || !c4.m8.notes.length) bad.push('m8 未在 notes 說明為何算不出來');
   if (bad.length) return { ok: false, detail: bad.join('；') };
-  return { ok: true, detail: '無樣本時整條鏈一路降級為 null，m8 附 ' + c4.m8.notes.length + ' 則說明' };
+  return { ok: true, detail: '無行情時整條鏈降級為 null，m8 附 ' + c4.m8.notes.length + ' 則說明' };
 });
 
 /* ---- 14. SPEC 第 3 節：V 的 key 全域唯一 ----
@@ -498,29 +476,23 @@ check(16, 'p.m3.overrides.far = 0 時，量體與出價上限一律為 0／null�
   return { ok: true, detail: '零容積一路傳下去，landCap = ' + fmtNum(cap) };
 });
 
-/* ---- 17. 迴歸防線：m3 停車檢核算不出來時，m5 不得從說明文字撈數字 ----
-   曾出現的錯：m5 用 firstNumber(c.requirement) 把「每 150 ㎡ 設一位」讀成「150 個車位」，
-   憑空生出 3.75 億車位收入與 4 億地下室成本。比例被當成數量。 */
-check(17, 'm3 停車檢核為 manual（valueNum 為 null）時，m5 不得生出車位數', function () {
+/* ---- 17. 迴歸防線：分區查不到（沒有容積率）時，m5 不得生出車位數或車位收入 ----
+   曾出現的錯：m5 從檢核說明文字撈數字，把「每 150 ㎡ 設一位」讀成「150 個車位」。 */
+check(17, '分區不在分區表（無容積率）時，停車檢核不得為 pass，m5 不得生出車位與車位收入', function () {
   var pp = TD.store.sample();
-  pp.parcel.zone = '商九';                       /* 種子資料沒有這個分區 → far/bcr 查不到 */
+  pp.parcel.zone = '商九';
   var cc;
   try { cc = TD.engine.run(pp); } catch (e) { return { ok: false, detail: 'run() 丟例外' }; }
   var chk = null, i, list = (cc.m3 && cc.m3.checks) || [];
   for (i = 0; i < list.length; i++) if (list[i] && list[i].id === 'parking') chk = list[i];
   if (!chk) return { ok: false, detail: 'm3 沒有 parking 檢核' };
-  if (chk.status === 'pass') return { ok: false, detail: '前提不成立：未知分區時 parking 竟為 pass' };
   var bad = [];
+  if (chk.status === 'pass') bad.push('未知分區時 parking 竟為 pass');
   if (chk.valueNum !== null) bad.push('m3 parking.valueNum 應為 null，實際 ' + fmtNum(chk.valueNum));
-  if (cc.m5.parkingRequired !== null) {
-    bad.push('m5.parkingRequired 應為 null，實際 ' + fmtNum(cc.m5.parkingRequired)
-      + '（八成是從 requirement 字串撈到了「每 150 ㎡」的 150）');
-  }
-  if (raw(cc.m6 && cc.m6.parkingRevenue)) {
-    bad.push('m6.parkingRevenue 應為 null 或 0，實際 ' + fmtNum(raw(cc.m6.parkingRevenue)));
-  }
+  if (raw(cc.m5.stalls)) bad.push('m5.stalls 應為 0，實際 ' + fmtNum(raw(cc.m5.stalls)));
+  if (raw(cc.m6 && cc.m6.parkingRevenue)) bad.push('m6.parkingRevenue 應為 0 或 null，實際 ' + fmtNum(raw(cc.m6.parkingRevenue)));
   if (bad.length) return { ok: false, detail: bad.join('；') };
-  return { ok: true, detail: 'm3 說算不出來，m5 就回 null，沒有憑空生出車位收入' };
+  return { ok: true, detail: '查無容積率時車位為 0、沒有憑空生出車位收入' };
 });
 
 /* ---- 18. 去版本化的迴歸防線：專案結構與結果樹都不得再帶 edition ----
@@ -599,12 +571,9 @@ check(20, '渲染後的介面文字沒有代號、沒有 NaN，空專案不以 0
     { name: '示範專案', p: p, ctx: ctx },
     { name: '空專案', p: empty, ctx: TD.engine.run(empty) }
   ];
-  /* 關掉示範比價：總銷算不出來，成本的比率項會被引擎用回落粗估總銷推出金額 */
+  /* 拿掉行情檔：總銷算不出來，成本的比率項會被引擎用回落粗估總銷推出金額 */
   var noComps = TD.store.sample();
-  noComps.m6 = noComps.m6 || {};
-  noComps.m6.useSampleComps = false;
-  noComps.m6.comps = [];
-  cases.push({ name: '無比價資料', p: noComps, ctx: TD.engine.run(noComps) });
+  cases.push({ name: '無比價資料', p: noComps, ctx: withoutLvr('臺北市', function () { return TD.engine.run(noComps); }) });
 
   /* 代號樣式與「模組」二字都用組字串寫，避免字面值留在本檔裡被自己的 grep 抓到 */
   var MOD_RE = new RegExp('(^|[^0-9A-Za-z_])' + 'M' + '[1-8]' + '([^0-9A-Za-z_]|$)');
@@ -639,6 +608,132 @@ check(20, '渲染後的介面文字沒有代號、沒有 NaN，空專案不以 0
 
   if (bad.length) return { ok: false, detail: bad.join('；') };
   return { ok: true, detail: cases.length + ' 種專案狀態的渲染輸出都乾淨，摘要沒有以 0 冒充' };
+});
+
+/* ================= 21～28：2026-10 使用者回報案例的防線 ================= */
+
+function caseP(zone, extra) {
+  var q = TD.store.defaults();
+  q.name = '幸福段1428';
+  q.parcel.city = '新北市'; q.parcel.district = '三重區'; q.parcel.section = '幸福段';
+  q.parcel.numbers = [{ no: '1428', areaM2: 201, share: '1/1' }, { no: '1428-1', areaM2: 78, share: '1/1' },
+                      { no: '1430-2', areaM2: 488, share: '1/1' }, { no: '1430-3', areaM2: 838, share: '1/1' },
+                      { no: '1430-4', areaM2: 13, share: '1/1' }];
+  q.parcel.zone = zone;
+  if (extra) extra(q);
+  return q;
+}
+var pCase = caseP('乙種工業區');
+var cCase = TD.engine.run(pCase);
+
+/* ---- 21. 乙種工業區不得當住宅估，也不得預設危老 ---- */
+check(21, '新北市三重區乙種工業區：產品為廠辦、建蔽 60%／容積 210%，素地不採危老或都更', function () {
+  var bad = [], site = cCase.m3 && cCase.m3.site;
+  if (!site) return { ok: false, detail: 'm3.site 不存在' };
+  if (site.product !== '廠辦') bad.push('產品應為廠辦，實際 ' + site.product);
+  if (raw(cCase.m3.bcr) !== 0.6) bad.push('建蔽率應為 0.6，實際 ' + fmtNum(raw(cCase.m3.bcr)));
+  if (raw(cCase.m3.far) !== 2.1) bad.push('容積率應為 2.1，實際 ' + fmtNum(raw(cCase.m3.far)));
+  var ch = cCase.m4 && cCase.m4.chosen;
+  if (!ch) bad.push('m4.chosen 為空');
+  else if (ch.regimeId === 'HR' || ch.regimeId === 'UR') bad.push('素地卻採用 ' + ch.regimeName);
+  var regs = (cCase.m4 && cCase.m4.regimes) || [], i, hr = null;
+  for (i = 0; i < regs.length; i++) if (regs[i].id === 'HR') hr = regs[i];
+  if (!hr || hr.feasible) bad.push('危老在素地應判為不可行並列出原因');
+  if (bad.length) return { ok: false, detail: bad.join('；') };
+  return { ok: true, detail: site.product + '，' + ch.regimeName + ' ' + fmtNum(ch.pct) };
+});
+
+/* ---- 22. 比價只用本區實價登錄，不得再出現其他行政區（曾拿大安區比三重區）---- */
+check(22, '比價案例全部來自新北市三重區，單價落在 25～80 萬／坪', function () {
+  var m6 = cCase.m6, bad = [];
+  if (!m6 || m6.method !== 'district') return { ok: false, detail: 'm6.method 應為 district，實際 ' + (m6 && m6.method) };
+  var comps = m6.comps || [], i;
+  if (!comps.length) bad.push('沒有比價案例');
+  for (i = 0; i < comps.length; i++) if (comps[i].district !== '三重區') { bad.push('出現其他行政區案例：' + comps[i].district); break; }
+  var price = raw(m6.unitPricePing);
+  if (!(price >= 250000 && price <= 800000)) bad.push('單價 ' + fmtNum(price) + ' 不在合理區間');
+  if (bad.length) return { ok: false, detail: bad.join('；') };
+  return { ok: true, detail: comps.length + ' 筆三重區廠辦預售，單價 ' + fmtNum(Math.round(price)) };
+});
+
+/* ---- 23. 出價上限每坪不得高於本區同分區土地成交的第 75 百分位（曾算出 234.7 萬／坪）---- */
+check(23, '幸福段出價上限每坪為正，且不高於三重區工業區土地行情第 75 百分位', function () {
+  var per = raw(cCase.m8 && cCase.m8.landCapPerPing), bm = cCase.m8 && cCase.m8.benchmark;
+  if (!isNum(per) || per <= 0) return { ok: false, detail: 'landCapPerPing = ' + fmtNum(per) };
+  if (!bm || !isNum(bm.p75)) return { ok: false, detail: '缺本區土地行情' };
+  if (per > bm.p75) return { ok: false, detail: '每坪 ' + fmtNum(Math.round(per)) + ' 高於行情 75 百分位 ' + fmtNum(bm.p75) };
+  return { ok: true, detail: '每坪 ' + fmtNum(Math.round(per)) + '；行情中位 ' + fmtNum(bm.p50) + '、75 百分位 ' + fmtNum(bm.p75) };
+});
+
+/* ---- 24. 營建成本為 2026 年行情（地上每坪至少 15 萬），且計入營業稅 ---- */
+check(24, '營建單價每坪 15 萬以上、地下室單價高於地上，且成本含營業稅', function () {
+  var m7 = cCase.m7, bad = [];
+  if (!m7 || !m7.params) return { ok: false, detail: 'm7 未產出' };
+  if (!(m7.params.perPing >= 150000)) bad.push('地上營建單價 ' + fmtNum(m7.params.perPing));
+  if (!(m7.params.basementPerPing > m7.params.perPing)) bad.push('地下室單價未高於地上');
+  if (!(m7.raws.businessTax > 0)) bad.push('營業稅為 ' + fmtNum(m7.raws.businessTax));
+  if (bad.length) return { ok: false, detail: bad.join('；') };
+  return { ok: true, detail: '地上 ' + fmtNum(Math.round(m7.params.perPing)) + '、地下 ' + fmtNum(Math.round(m7.params.basementPerPing))
+    + '、營業稅 ' + fmtNum(Math.round(m7.raws.businessTax)) };
+});
+
+/* ---- 25. 行政區清單與行情檔齊全；新北市住宅區容積率依行政區與路寬 ---- */
+check(25, '22 縣市 368 鄉鎮市區、每縣市都有行情檔；三重區住宅區 300%，路寬 6 m 降為 200%', function () {
+  var dd = TD.data.districts, bad = [], n = 0, i;
+  if (!dd || dd.counties.length !== 22) bad.push('縣市數 ' + (dd ? dd.counties.length : 0));
+  for (i = 0; dd && i < dd.counties.length; i++) {
+    n += dd.list(dd.counties[i]).length;
+    if (!fs.existsSync(path.join(ROOT, 'js/data/lvr/' + dd.codeOf[dd.counties[i]] + '.js'))) bad.push(dd.counties[i] + ' 缺行情檔');
+  }
+  if (n !== 368) bad.push('鄉鎮市區數 ' + n);
+  if (!dd.has('新北市', '三重區')) bad.push('新北市沒有三重區');
+  var cRes = TD.engine.run(caseP('住宅區'));
+  if (raw(cRes.m3.far) !== 3.0) bad.push('三重區住宅區容積率 ' + fmtNum(raw(cRes.m3.far)));
+  var cNar = TD.engine.run(caseP('住宅區', function (q) { q.parcel.roadWidth = 6; }));
+  if (raw(cNar.m3.far) !== 2.0) bad.push('路寬 6 m 時容積率 ' + fmtNum(raw(cNar.m3.far)));
+  if (bad.length) return { ok: false, detail: bad.join('；') };
+  return { ok: true, detail: '22 縣市、' + n + ' 區；三重住宅區 300%／窄路 200%' };
+});
+
+/* ---- 26. 第二類謄本（姓名、統編隱匿）要能判讀 ---- */
+check(26, '第二類謄本：辨識為第二類，面積、權利範圍與抵押權照常判讀，不因隱匿而亮紅燈', function () {
+  var txt = ['土地登記第二類謄本（地號全部）', '新北市三重區幸福段　１４２８地號',
+    '＊＊＊＊＊＊ 土地標示部 ＊＊＊＊＊＊', '面積：＊＊＊＊＊２０１．００平方公尺',
+    '＊＊＊＊＊＊ 土地所有權部 ＊＊＊＊＊＊', '（０００１）登記次序：０００１', '登記日期：民國０９５年０３月０２日　登記原因：買賣',
+    '所有權人：林＊＊', '統一編號：Ａ１２＊＊＊＊＊＊＊', '權利範圍：＊＊＊＊２分之１＊＊＊＊',
+    '（０００２）登記次序：０００２', '所有權人：陳＊＊', '權利範圍：＊＊＊＊２分之１＊＊＊＊',
+    '＊＊＊＊＊＊ 土地他項權利部 ＊＊＊＊＊＊', '權利種類：最高限額抵押權', '擔保債權總金額：新臺幣＊＊＊３，６００，０００元正'].join('\n');
+  var q = caseP('乙種工業區', function (x) { x.parcel.numbers = [{ no: '1428', areaM2: 201, share: '1/1' }]; x.parcel.deedText = txt; });
+  var c = TD.engine.run(q), bad = [];
+  if (c.m1.deedClass !== 2) bad.push('deedClass 應為 2，實際 ' + fmtNum(c.m1.deedClass));
+  if (!c.m1.deed || !c.m1.deed.found || !c.m1.deed.found.share) bad.push('沒有解析出權利範圍');
+  if (c.m2.level === 'red') bad.push('第二類謄本被判紅燈');
+  if (bad.length) return { ok: false, detail: bad.join('；') };
+  return { ok: true, detail: '第二類，產權燈號 ' + c.m2.level };
+});
+
+/* ---- 27. 法規檢討不得再有「算不出來」：每一項都要有計算結果 ---- */
+check(27, '法規檢討每一項的狀態為 通過／不通過／注意／提醒，沒有人工待補', function () {
+  var list = (cCase.m3 && cCase.m3.checks) || [], i, bad = [], ok = ['pass', 'fail', 'warn', 'info', 'na'];
+  if (list.length < 9) bad.push('檢核項目只有 ' + list.length + ' 項');
+  for (i = 0; i < list.length; i++) if (ok.indexOf(list[i].status) < 0) bad.push(list[i].id + ' 狀態 ' + list[i].status);
+  if (bad.length) return { ok: false, detail: bad.join('；') };
+  return { ok: true, detail: list.map(function (x) { return x.id + '=' + x.status; }).join('、') };
+});
+
+/* ---- 28. 介面文字不得出現「待查證」「算不出來」 ---- */
+check(28, '示範專案與幸福段案例的介面與報告不出現「待查證」「算不出來」', function () {
+  loadUiOnce();
+  function allOpen() { return true; }
+  var bad = [], list = [[p, ctx, '示範專案'], [pCase, cCase, '幸福段']], i, h;
+  for (i = 0; i < list.length; i++) {
+    h = TD.ui.renderInputs(list[i][1], list[i][0], allOpen) + TD.ui.renderResults(list[i][1], list[i][0], allOpen)
+      + TD.ui.renderDetails(list[i][1], list[i][0], allOpen) + TD.ui.reportHtml(list[i][1], list[i][0]);
+    if (h.indexOf('待查證') >= 0) bad.push(list[i][2] + ' 出現「待查證」');
+    if (h.indexOf('算不出來') >= 0) bad.push(list[i][2] + ' 出現「算不出來」');
+  }
+  if (bad.length) return { ok: false, detail: bad.join('；') };
+  return { ok: true, detail: '兩個專案的介面與報告都沒有' };
 });
 
 /* ================================================================= */

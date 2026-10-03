@@ -117,12 +117,14 @@ window.TD = window.TD || {};
       advice: '請地政士就每一筆他項權利確認塗銷方式與成本。'
     },
     noDeed: {
-      label: '沒有謄本文字，產權無法判讀',
+      label: '尚未提供謄本（產權未檢查）',
       level: 'amber', resolvable: true,
-      lawKey: null, lawName: '土地登記規則', article: '待查',
-      advice: '請所有權人本人（或持委任書的受託人）帶身分證明文件，到土地所在地的地政事務所申請'
-            + '第一類土地與建物登記謄本，臨櫃當日可取得，內容含完整所有權人姓名、住址、他項權利與債權額；'
-            + '取回後把全文貼進 M1。本系統不連網、不代為查調，沒有這段文字就沒有產權判讀。'
+      lawKey: 'LAND_REG_RULES', lawName: '土地登記規則', article: '第24條之1',
+      advice: '第二類謄本任何人都可以申請（土地登記規則第24條之1）：在全國地政電子謄本系統（ep.land.nat.gov.tw）'
+            + '以地號線上申請土地與建物登記謄本，或到任一地政事務所臨櫃申請，幾分鐘就拿得到。'
+            + '第二類會遮蔽自然人的部分姓名與統一編號，但權利範圍、登記原因與日期、限制登記（查封、假扣押、假處分、預告登記）、'
+            + '他項權利與擔保債權總金額、祭祀公業與公司等非自然人名稱都完整顯示，足以判讀主要產權地雷。'
+            + '把謄本全文貼進左欄「謄本」即可；第一類（含完整姓名與住址）限所有權人申請，簽約前再請賣方提供。'
     }
   };
 
@@ -372,6 +374,11 @@ window.TD = window.TD || {};
     }
     var owners = (parsed && isArr(parsed.owners)) ? parsed.owners : [];
     var lines = toLines(text);
+    if (parsed && (parsed.deedClass === 2 || parsed.maskedOwners > 0)) {
+      notes.push('本次判讀依第二類謄本：祭祀公業、神明會、公司等非自然人名稱、限制登記、他項權利、權利範圍與登記原因都完整可讀；'
+               + '自然人姓名與住址部分遮蔽，因此「海外共有人」與「未辦繼承人數」只能從登記原因與公同共有記載推斷，'
+               + '簽約前請賣方提供第一類謄本或由地政士複核。');
+    }
 
     var ownerCountEff = rawOf(m1 ? m1.ownerCount : null, 0);
     if (ownerCountEff <= 0) ownerCountEff = owners.length;
@@ -384,8 +391,8 @@ window.TD = window.TD || {};
     /* ---- 沒有謄本文字：一律黃燈，絕不因為「找不到關鍵字」就報綠燈 ---- */
     if (trim(text) === '') {
       flags.push(mkFlag('noDeed', DEF.noDeed, 'amber',
-        '未提供任何登記謄本文字，系統無從偵測祭祀公業、未辦繼承、日治時期名義人、限制登記等瑕疵。'
-        + '這是「不知道」，不是「沒問題」——產權風險完全未經檢查。',
+        '未提供登記謄本文字，系統還沒有檢查祭祀公業、公同共有／未辦繼承、日治時期名義人、限制登記與他項權利。'
+        + '這是「還沒查」，不是「沒問題」；貼上第二類謄本（線上即可申請）就能完成判讀。',
         DEF.noDeed.advice, true));
     } else if (compact(text).length < 60) {
       flags.push(mkFlag('noDeed', DEF.noDeed, 'amber',

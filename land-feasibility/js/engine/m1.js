@@ -1,4 +1,4 @@
-/* M1 土地基本資訊擷取：整理使用者輸入的地號資料，並以純正則解析本人親赴地政事務所申請的第一類登記謄本文字。*/
+/* M1 土地基本資訊擷取：整理使用者輸入的地號資料，並以純正則解析使用者貼上的土地與建物登記謄本（第一類或第二類）文字。*/
 window.TD = window.TD || {};
 (function (TD) {
   'use strict';
@@ -10,9 +10,12 @@ window.TD = window.TD || {};
   /* --------------------------------------------------------------------------
      謄本來源前提（SPEC 第 7 節 m1）
 
-     本系統假設使用者或其客戶**本人持身分證明文件親赴地政事務所臨櫃申請第一類
-     土地與建物登記謄本**，因此文字含完整所有權人姓名、住址、他項權利與債權額。
-     系統完全離線、不連網、不呼叫任何 API、不代為查調，只解析使用者貼上的文字。
+     謄本分三類（土地登記規則第24條之1）：第一類顯示全部資料，限登記名義人等申請；
+     第二類任何人均得申請（含全國地政電子謄本系統線上申請），隱匿出生日期、部分姓名、
+     部分統一編號、債務人及債務額比例與設定義務人，**但限制登記、非自然人之姓名及統一編號
+     不隱匿**；權利範圍、登記原因與日期、他項權利種類與擔保債權總金額也都完整顯示。
+     買方評估土地時通常只拿得到第二類，因此兩類都要能解析：遮蔽的姓名（王＊明）是正常的，
+     不是解析失敗。系統完全離線、不連網、不代為查調，只解析使用者貼上的文字。
 
      解析原則（原則一「不對稱精度陷阱」的具體落實）：
      1. 純正則，逐行比對。**抓不到就放進 unparsed，絕對不猜。**
@@ -20,8 +23,11 @@ window.TD = window.TD || {};
      3. 使用者輸入與謄本解析結果不一致時，不自動覆蓋任何一邊，只出 warning 請人工判斷。
      -------------------------------------------------------------------------- */
 
-  var DEED_PREMISE = '來源為使用者貼上的第一類土地與建物登記謄本文字（本人親赴地政事務所臨櫃申請，含完整姓名、住址與債權額）。'
-                   + '本系統不連網、不代為查調，解析結果一律須與紙本逐欄核對。';
+  var DEED_PREMISE = '來源為使用者貼上的土地與建物登記謄本文字（第一類或第二類皆可；第二類任何人均可於全國地政電子謄本系統線上申請，'
+                   + '姓名與統一編號部分遮蔽，但限制登記、非自然人名稱、權利範圍、登記原因與他項權利完整顯示）。'
+                   + '本系統不連網、不代為查調，解析結果一律須與謄本逐欄核對。';
+  /* 第二類謄本的遮蔽字元：＊、*、○、〇、◯、Ｏ、●、＃ */
+  var MASK_RE = /[＊*○〇◯Ｏ●＃]/;
   var INPUT_SRC = '使用者於本模組輸入之地號資料';
 
   var MAX_LINES = 20000;     // 解析行數上限；超過會在 unparsed 明講被截斷，不默默吞掉
@@ -214,11 +220,12 @@ window.TD = window.TD || {};
                   floorsFrom: '', completionAD: null, use: '', material: '' },
       section: '', printedAt: '', office: '',
       totals: { areaM2: null, ownerCount: 0, shareDenomMax: null, jointCount: 0, rightAmount: null },
-      found: {}, unparsed: [], notes: [], lineCount: 0
+      found: {}, unparsed: [], notes: [], lineCount: 0, deedClass: null, maskedOwners: 0
     };
 
     if (trim(src) === '') {
-      res.unparsed.push('全文：未提供謄本文字。請本人（或受託人）親赴地政事務所申請第一類土地與建物登記謄本，把完整文字貼進本欄；本系統不連網、不代為查調。');
+      res.unparsed.push('全文：未提供謄本文字。第二類謄本任何人都可以在全國地政電子謄本系統（ep.land.nat.gov.tw）線上申請，'
+                      + '把完整文字貼進本欄即可；本系統不連網、不代為查調。');
       return res;
     }
 
@@ -237,6 +244,10 @@ window.TD = window.TD || {};
       });
     }
     res.lineCount = lines.length;
+    var cmpAll = compact(src);
+    if (/第二類/.test(cmpAll)) res.deedClass = 2;
+    else if (/第三類/.test(cmpAll)) res.deedClass = 3;
+    else if (/第一類/.test(cmpAll)) res.deedClass = 1;
 
     /* --- found 記錄器 --- */
     function put(key, value, ln) {
@@ -401,8 +412,12 @@ window.TD = window.TD || {};
           shareNum: null, shareDenom: null, shareValue: null, joint: /公同共有/.test(v),
           cause: pendingCause, line: ln.no, target: section
         };
+        curOwner.masked = MASK_RE.test(curOwner.name);
         if (curOwner.name === '') { bad(ln, '所有權人姓名', v); }
-        else { res.owners.push(curOwner); put('owner', curOwner.name, ln); }
+        else {
+          res.owners.push(curOwner); put('owner', curOwner.name, ln);
+          if (curOwner.masked) res.maskedOwners++;
+        }
         pendingCause = '';
       }
 
@@ -609,7 +624,14 @@ window.TD = window.TD || {};
 
     if (!res.numbers.length) res.unparsed.push('全文：未偵測到地號（「地　號：0123-0000」或頁首「建國段 0123-0000地號」兩種寫法都會抓）。地號與面積是後續所有計算的基礎，請確認貼上的是完整謄本文字。');
     if (totalArea === null) res.unparsed.push('全文：未偵測到「面積：… 平方公尺」，土地面積無法解析。');
-    if (!res.owners.length) res.unparsed.push('全文：未偵測到「所有權人」欄位。第一類謄本才會列出完整姓名；若貼的是第二類或第三類謄本，姓名會被遮罩，請重新申請第一類。');
+    if (!res.owners.length) res.unparsed.push('全文：未偵測到「所有權人」欄位。第一類、第二類謄本都有這一欄（第二類姓名部分遮蔽，例如「王＊明」），'
+                                           + '請確認貼上的是含所有權部的完整謄本。');
+    if (res.deedClass === null && res.maskedOwners > 0) res.deedClass = 2;
+    if (res.deedClass === 2 || res.maskedOwners > 0) {
+      res.notes.push('偵測為第二類謄本（所有權人姓名部分遮蔽 ' + res.maskedOwners + ' 位）。第二類仍完整顯示權利範圍、登記原因與日期、'
+                   + '限制登記、他項權利與擔保債權總金額，以及祭祀公業、神明會、公司等非自然人名稱，產權判讀可照常進行；'
+                   + '無法判讀的只有自然人的完整姓名與住址（未辦繼承與海外共有人須由地政士另以第一類或戶籍資料確認）。');
+    }
     if (res.zoneText === '') res.notes.push('謄本文字未載使用分區。土地登記謄本本來就常常沒有這一欄，正式的分區應以土地使用分區證明書或地政圖資為準，請人工填入。');
     if (res.printedAt === '') res.notes.push('未偵測到「列印時間」，無法確認謄本新舊。產權狀態隨時會變，建議使用一個月內申請的謄本。');
     for (i = 0; i < res.owners.length; i++) {
@@ -690,17 +712,22 @@ window.TD = window.TD || {};
                       '有填地號或面積的列數 = ' + parcelRows,
                       '多筆地號要確認是否相鄰、是否同一使用分區、有無夾雜他人土地或既成道路。');
 
-    /* ---- 分區 ---- */
+    /* ---- 分區與基地情境（各段共用，見 js/engine/site.js） ---- */
+    var site = TD.engine.siteOf ? TD.engine.siteOf(p) : null;
     var city = trim(pc.city), district = trim(pc.district), zoneCode = trim(pc.zone), zoneName = '';
     var zoneSrc = '', zoneArticle = '';
-    var zdata = (TD.data && TD.data.zoning && TD.data.zoning.cities) ? TD.data.zoning.cities[city] : null;
-    if (zdata && isObj(zdata.zones) && zdata.zones[zoneCode]) {
-      zoneName = str(zdata.zones[zoneCode].name);
-      zoneSrc = str(zdata.lawName);
-      zoneArticle = str(zdata.zones[zoneCode].article);
+    if (site && site.zone) {
+      zoneName = str(site.zone.name);
+      zoneSrc = str(site.zone.src);
+      zoneArticle = str(site.zone.article);
+      if (site.zone.mappedFrom) {
+        warnings.push('分區「' + site.zone.mappedFrom + '」在' + city + '的分區表中以「' + site.zone.name + '」計算'
+                    + '（' + city + '的住宅區、商業區不分種別時，以該市通則與細部計畫值計）。');
+      }
     } else if (zoneCode !== '') {
-      warnings.push('分區代碼「' + zoneCode + '」不在' + (city || '本縣市') + '的分區種子資料內，m3 將無法查到建蔽率與容積率，請確認分區代碼或先補資料。');
+      warnings.push('分區「' + zoneCode + '」不在' + (city || '本縣市') + '的分區表內，請改選清單中的分區，或在左側直接輸入建蔽率與容積率。');
     }
+    if (site && site.useConflict) warnings.push(site.useConflict);
 
     /* ---- 謄本解析 ---- */
     var deedText = str(pc.deedText);
@@ -716,7 +743,7 @@ window.TD = window.TD || {};
       (parsed.found && keyCount(parsed.found) > 0)
     ));
     if (parsed && !parsedOk) {
-      warnings.push('貼上的文字不像第一類土地登記謄本：地號、面積、權利範圍、所有權人與他項權利'
+      warnings.push('貼上的文字不像土地登記謄本：地號、面積、權利範圍、所有權人與他項權利'
                   + '一個欄位都沒有抓到。請確認貼的是地政事務所核發的謄本全文（含標示部、'
                   + '所有權部與他項權利部），否則 m2 的產權地雷判讀完全無效。');
     }
@@ -731,8 +758,8 @@ window.TD = window.TD || {};
     if (parsed) {
       for (i = 0; i < parsed.notes.length; i++) warnings.push('謄本解析：' + parsed.notes[i]);
     } else {
-      warnings.push('尚未貼上登記謄本文字。產權地雷（m2）與所有權人結構完全無從判讀，'
-                  + '請本人親赴地政事務所申請第一類土地與建物登記謄本後把全文貼進來；本系統不連網、不代為查調。');
+      warnings.push('尚未貼上登記謄本文字。產權地雷與所有權人結構無從判讀；'
+                  + '第二類謄本任何人都可在全國地政電子謄本系統線上申請，貼上全文即可判讀。本系統不連網、不代為查調。');
     }
 
     /* ---- 使用者輸入與謄本的交叉核對（不自動覆蓋，只出警示） ---- */
@@ -792,8 +819,10 @@ window.TD = window.TD || {};
 
     /* ---- 臨路與基地形狀 ---- */
     var roadWidth = numOf(pc.roadWidth, 0);
-    var vRoad = TD.V('m1.roadWidth', roadWidth, roadWidth > 0 ? 'input' : 'low', INPUT_SRC,
-                     '正面路寬 = ' + roadWidth + ' 公尺（使用者輸入）',
+    var roadDflt = (TD.engine && TD.engine.DEFAULT_ROAD_M) || 8;
+    var vRoad = TD.V('m1.roadWidth', roadWidth > 0 ? roadWidth : roadDflt, roadWidth > 0 ? 'input' : 'low', INPUT_SRC,
+                     roadWidth > 0 ? '正面路寬 = ' + roadWidth + ' 公尺（使用者輸入）'
+                                   : '未輸入，暫以 ' + roadDflt + ' 公尺（都市計畫地區最常見之計畫道路寬度）試算',
                      '路寬決定畸零地標準、容積上限與高度比，必須以建築線指定圖或都市計畫道路寬度為準，'
                    + '現場目測的路寬常把人行道與退縮地算進去，會高估。');
 
@@ -808,12 +837,12 @@ window.TD = window.TD || {};
       { ok: trim(pc.section) !== '' || (parsed && parsed.section !== ''), label: '段小段' },
       { ok: parcelRows > 0 && areaRows > 0, label: '地號與面積' },
       { ok: areaM2 > 0, label: '面積合計大於零' },
-      { ok: zoneName !== '', label: '使用分區（且在分區資料表內）' },
+      { ok: zoneName !== '', label: '使用分區（且在分區表內）' },
       { ok: roadWidth > 0, label: '正面路寬' },
       { ok: siteWidth > 0 && siteDepth > 0, label: '基地寬度與深度' },
       { ok: ownerCountEff > 0, label: '所有權人數' },
       { ok: deed.hasText, label: '登記謄本文字' },
-      { ok: !!(parsed && parsed.owners.length), label: '謄本解析出所有權人' },
+      { ok: !!(parsed && parsed.owners.length), label: '謄本解析出所有權人（第一類或第二類）' },
       { ok: !!(parsed && parsed.totals.areaM2 !== null), label: '謄本解析出面積' }
     ];
     var okCount = 0;
@@ -863,7 +892,9 @@ window.TD = window.TD || {};
         return { no: trim(rr.no), areaM2: a2, areaPing: a2 / PING, share: str(rr.share) };
       }),
       crosscheck: cross,
-      premise: DEED_PREMISE
+      premise: DEED_PREMISE,
+      site: site,
+      deedClass: parsed ? parsed.deedClass : null
     };
   }
 

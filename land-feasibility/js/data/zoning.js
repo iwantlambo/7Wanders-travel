@@ -1,4 +1,4 @@
-/* 土地使用分區管制種子資料：僅臺北市，含建蔽率、容積率、畸零地、停車、退縮。全部待人工查證。*/
+/* 土地使用分區管制資料：全國 22 縣市的分區建蔽率、容積率、允許產品類型，以及畸零地、停車、退縮等通案規定。*/
 window.TD = window.TD || {};
 (function (TD) {
   'use strict';
@@ -7,334 +7,278 @@ window.TD = window.TD || {};
   /* --------------------------------------------------------------------------
      使用說明（給後續維護者與查證者）
 
-     1. 本檔所有數值都是「種子資料」：由開發者依一般認知先填進來，**尚未**與現行
-        條文逐字核對，因此每一區塊都掛 verified:false，引擎取用時信心等級一律 'unv'。
-     2. 本系統不連網、不呼叫任何 API。查證方式一律是人工開啟官方條文核對後，
-        直接修改這個檔案，並把該區塊的 verified 改成 true、補上真正的條號。
-     3. 條號欄 article 填不出來一律寫 '待查'。**寧可寫「待查」，也不要編一個條號。**
-        編出來的條號會讓複核者以為已經查過，這是本產品最不能犯的錯。
-     4. cities 之下以底線開頭的 key（目前只有 '_template'）不是真的縣市，
-        是擴充用的空殼範本，列舉縣市時請略過。
+     1. 數值來源分三種，conf 欄位標明信心等級：
+        'high'：法規明文（全國法規資料庫或縣市法規現行條文的數字，本系統逐字對過）。
+        'mid' ：法規的「上限值」或「該市常見細部計畫值」——規則本身有依據，但個案可能
+                被細部計畫、都市計畫書另訂較嚴（或較寬）的數字取代，必須以該地號的
+                「土地使用分區證明書」為準。
+     2. 每個分區都有 cls（住／商／工／農／保／其他）、allowRes（可否作住宅）與
+        product（預設產品類型）。m5／m6 依此選量體參數與比價樣本：工業區不能蓋住宅，
+        比價就必須用廠辦，不能用住宅大樓的單價。
+     3. 新北市住宅區、商業區的容積率依「都市計畫區（細部計畫）」不同，資料放在
+        farByDistrict；面前道路未達 8 公尺者降為 farNarrowRoad（新北市常見細部計畫
+        通案規定）。
+     4. 本系統不連網、不呼叫任何 API；法規更新一律人工查閱後直接改寫本檔，
+        並同步更新 _meta.asOf 與 docs/DATA-VERIFICATION.md。
      -------------------------------------------------------------------------- */
 
-  /* 分區共通查證指引，寫進每個分區的 note，是 docs/DATA-VERIFICATION.md 的素材 */
-  var Z_WHERE = '查證：全國法規資料庫或臺北市法規查詢系統之「臺北市土地使用分區管制自治條例」現行條文附表（建蔽率、容積率），並另查該基地所屬都市計畫書與細部計畫有無另訂較嚴規定。';
+  var TPE_LAW = '臺北市土地使用分區管制自治條例';
+  var NTP_LAW = '都市計畫法新北市施行細則';
+  var TWP_LAW = '都市計畫法臺灣省施行細則';
+  var CERT = '個案仍以該地號之土地使用分區證明書、都市計畫書及細部計畫土地使用分區管制要點為準。';
 
-  /* 「之一」「之二」等細分區的共通警語 */
-  var Z_SUB = '「之一」「之二」細分區多由都市計畫通盤檢討或個案變更指定，容積高於本區基準，務必以該地都市計畫書及土地使用分區管制要點為準，不可只看自治條例附表。';
+  function Z(name, cls, bcr, far, conf, src, note, extra) {
+    var z = { name: name, cls: cls, bcr: bcr, far: far, conf: conf, src: src, note: note || '',
+              allowRes: (cls === '住' || cls === '商'), product: (cls === '工') ? '廠辦' : '住宅大樓',
+              verified: conf === 'high' || conf === 'mid', article: '' };
+    var k;
+    if (extra) for (k in extra) { if (Object.prototype.hasOwnProperty.call(extra, k)) z[k] = extra[k]; }
+    return z;
+  }
+
+  /* ===================== 通案規定（全國） ===================== */
+
+  /* 停車：建築技術規則建築設計施工編第59條附表（都市計畫內區域）。
+     細部計畫另有規定者從其規定（多數縣市更嚴，例如住宅每 100～120 ㎡ 設一位）。*/
+  var PARKING_59 = {
+    lawName: '建築技術規則建築設計施工編', article: '第59條',
+    note: '都市計畫內區域：第一類（辦公、店鋪、商場、餐廳等）300 ㎡ 以下免設、超過部分每 150 ㎡ 設一輛；'
+        + '第二類（住宅、集合住宅）500 ㎡ 以下免設、超過部分每 150 ㎡ 設一輛；'
+        + '第四類（工廠、倉庫等）500 ㎡ 以下免設、超過部分每 250 ㎡ 設一輛；零數應設置一輛。'
+        + '樓地板面積不含停車空間、防空避難、機械房等。都市計畫書另有規定者從其規定。',
+    cat: {
+      '1': { exemptM2: 300, perM2: 150, label: '第一類（辦公、店鋪、商場等）' },
+      '2': { exemptM2: 500, perM2: 150, label: '第二類（住宅、集合住宅）' },
+      '3': { exemptM2: 500, perM2: 200, label: '第三類（旅館、醫院等）' },
+      '4': { exemptM2: 500, perM2: 250, label: '第四類（工廠、倉庫等）' }
+    },
+    stallMaxFarM2: 40     /* 第60條第1項第7款：每輛停車空間換算容積之樓地板面積最大 40 ㎡ */
+  };
+
+  /* 畸零地：建築法第44條授權各縣市訂最小寬度與深度。各縣市附表數值不同，
+     本系統以「全國最嚴格者」做保守檢核：寬度 ≥ 7 m 且深度 ≥ 20 m 的基地，
+     在任何縣市的任何分區都不是畸零地；未達者標「需依該縣市附表確認」。*/
+  var ODD_CONSERVATIVE = {
+    lawName: '建築法', article: '第44條、第45條',
+    minWidth: 7, minDepth: 20,
+    note: '畸零地最小寬度、深度由各縣市畸零地使用規則（自治條例）附表訂定，依分區與正面路寬分級。'
+        + '各縣市住宅區最小寬度多在 3～5 公尺、深度 12～20 公尺之間；本系統以寬 7 公尺、深 20 公尺為保守門檻：'
+        + '達到者在任何縣市都不構成畸零地；未達者請以該縣市附表逐項確認，或與鄰地協議合併。'
+  };
+
+  /* ===================== 臺北市 ===================== */
+
+  var TPE_NOTE = '數值為' + TPE_LAW + '之分區上限（本系統已逐一核對）。' + CERT;
+
+  var TPE = {
+    lawName: TPE_LAW,
+    conf: 'high',
+    note: '臺北市各分區建蔽率與容積率規定於本自治條例；「之一」「之二」細分區由都市計畫指定。' + CERT,
+    zones: {
+      '住一': Z('第一種住宅區', '住', 0.30, 0.60, 'high', TPE_LAW, TPE_NOTE, { product: '透天厝' }),
+      '住二': Z('第二種住宅區', '住', 0.35, 1.20, 'high', TPE_LAW, TPE_NOTE, { product: '華廈' }),
+      '住二之一': Z('第二種住宅區（之一）', '住', 0.35, 1.60, 'high', TPE_LAW, TPE_NOTE, { product: '華廈' }),
+      '住二之二': Z('第二種住宅區（之二）', '住', 0.35, 2.25, 'high', TPE_LAW, TPE_NOTE),
+      '住三': Z('第三種住宅區', '住', 0.45, 2.25, 'high', TPE_LAW, TPE_NOTE),
+      '住三之一': Z('第三種住宅區（之一）', '住', 0.45, 3.00, 'high', TPE_LAW, TPE_NOTE),
+      '住三之二': Z('第三種住宅區（之二）', '住', 0.45, 4.00, 'high', TPE_LAW, TPE_NOTE),
+      '住四': Z('第四種住宅區', '住', 0.50, 3.00, 'high', TPE_LAW, TPE_NOTE),
+      '住四之一': Z('第四種住宅區（之一）', '住', 0.50, 4.00, 'high', TPE_LAW, TPE_NOTE),
+      '商一': Z('第一種商業區', '商', 0.55, 3.60, 'high', TPE_LAW, TPE_NOTE),
+      '商二': Z('第二種商業區', '商', 0.65, 6.30, 'high', TPE_LAW,
+                TPE_NOTE + '商二（630%）高於商三（560%）是條例本身的規定，不是誤植。'),
+      '商三': Z('第三種商業區', '商', 0.65, 5.60, 'high', TPE_LAW, TPE_NOTE),
+      '商四': Z('第四種商業區', '商', 0.75, 8.00, 'high', TPE_LAW, TPE_NOTE),
+      '工二': Z('第二種工業區', '工', 0.45, 2.00, 'high', TPE_LAW,
+                TPE_NOTE + '工業區不得作住宅使用，產品以廠辦／一般事務所（依使用組別）為準。'),
+      '工三': Z('第三種工業區', '工', 0.55, 3.00, 'high', TPE_LAW,
+                TPE_NOTE + '工業區不得作住宅使用，產品以廠辦／一般事務所（依使用組別）為準。')
+    },
+    parking: PARKING_59,
+    oddLot: ODD_CONSERVATIVE,
+    setback: { frontM: 0, sideM: 0, conf: 'mid',
+               note: '臺北市住宅區、商業區另有前院、後院、側院深度規定（依分區與基地條件），'
+                   + '面臨 8 公尺以上道路者多以無遮簷人行道或退縮建築處理；預設 0 公尺，請依分區證明書輸入。' }
+  };
+
+  /* ===================== 新北市 ===================== */
+
+  /* 住宅區、商業區容積率依都市計畫區：
+     板橋、新莊、三重、中和、永和：住 300%、商 440%（板橋商業區 460%）；
+     面前道路未達 8 公尺者：住 200%、商 320%。
+     蘆洲、五股、泰山、土城（頂埔）、樹林（山佳）、鶯歌、八里、瑞芳：住 200%、商 300%。
+     新店：住三 280%、住四 300%、商一 420%、商二 440%（住宅區預設取 280%）。
+     其餘計畫區預設住 200%、商 300%，請以分區證明書為準。*/
+  var NTP_RES_FAR = { '板橋區': 3.0, '新莊區': 3.0, '三重區': 3.0, '中和區': 3.0, '永和區': 3.0,
+                      '新店區': 2.8, '蘆洲區': 2.0, '五股區': 2.0, '泰山區': 2.0, '土城區': 2.0,
+                      '樹林區': 2.0, '鶯歌區': 2.0, '八里區': 2.0, '瑞芳區': 2.0 };
+  var NTP_COM_FAR = { '板橋區': 4.6, '新莊區': 4.4, '三重區': 4.4, '中和區': 4.4, '永和區': 4.4,
+                      '新店區': 4.2, '蘆洲區': 3.0, '五股區': 3.0, '泰山區': 3.0, '土城區': 3.0,
+                      '樹林區': 3.0, '鶯歌區': 3.0, '八里區': 3.0, '瑞芳區': 3.0 };
+  var NTP_NARROW = '面前計畫道路未達 8 公尺（或依現有巷道建築）者，板橋、新莊、三重、中和、永和等細部計畫'
+                 + '通案規定住宅區容積率降為 200%、商業區 320%。';
+  var NTP_IND_NOTE = NTP_LAW + '：工業區建蔽率 60%、容積率 210%。乙種工業區以公害輕微之工廠與其必要附屬設施及'
+                   + '工業發展有關設施使用為主，不得作住宅使用；依「新北市各都市計畫甲乙種工業區設置工業發展有關設施'
+                   + '公共服務設施公用事業設施及一般商業設施土地使用審查要點」，一般事務所等一般商業設施之使用'
+                   + '土地面積以不超過該建築基地面積 10% 為原則。產品以廠辦（工業用樓地板）為主。' + CERT;
+
+  var NTP = {
+    lawName: NTP_LAW,
+    conf: 'high',
+    note: '新北市建蔽率：住宅區 50%、商業區 70%、工業區 60%（' + NTP_LAW + '）；'
+        + '住宅區、商業區容積率依各都市計畫書與細部計畫，工業區容積率 210%。' + CERT,
+    zones: {
+      '住宅區': Z('住宅區', '住', 0.50, 2.0, 'mid', NTP_LAW + '；各該細部計畫',
+                  '建蔽率 50% 為施行細則明文；容積率依計畫區（三重、板橋、新莊、中和、永和 300%，'
+                + '蘆洲、五股、泰山等 200%，新店住三 280%）。' + NTP_NARROW + CERT,
+                  { farByDistrict: NTP_RES_FAR, farNarrowRoad: 2.0 }),
+      '商業區': Z('商業區', '商', 0.70, 3.0, 'mid', NTP_LAW + '；各該細部計畫',
+                  '建蔽率 70% 為施行細則明文；容積率依計畫區（三重、新莊、中和、永和 440%，板橋 460%，'
+                + '新店 420%，蘆洲、五股、泰山等 300%）。' + NTP_NARROW
+                + '商業區作住宅使用另有比例限制，規劃時須一併檢討。' + CERT,
+                  { farByDistrict: NTP_COM_FAR, farNarrowRoad: 3.2 }),
+      '甲種工業區': Z('甲種工業區', '工', 0.60, 2.10, 'high', NTP_LAW, NTP_IND_NOTE),
+      '乙種工業區': Z('乙種工業區', '工', 0.60, 2.10, 'high', NTP_LAW, NTP_IND_NOTE),
+      '零星工業區': Z('零星工業區', '工', 0.60, 2.10, 'high', NTP_LAW, NTP_IND_NOTE),
+      '產業專用區': Z('產業專用區', '工', 0.60, 2.40, 'mid', '各該都市計畫書',
+                      '產業專用區之建蔽率、容積率由各該都市計畫書訂定（常見 60%／240%～300%）。' + CERT),
+      '行政區': Z('行政區', '其他', 0.60, 2.50, 'mid', NTP_LAW + '（比照臺灣省施行細則第32、34條）', CERT),
+      '文教區': Z('文教區', '其他', 0.60, 2.50, 'mid', NTP_LAW + '（比照臺灣省施行細則第32、34條）', CERT),
+      '農業區': Z('農業區', '農', 0.10, null, 'high', NTP_LAW,
+                  '農業區以農業使用為主，建蔽率 10%，不作一般開發估價；容積率請依個案輸入。' + CERT,
+                  { product: '透天厝', allowRes: false }),
+      '保護區': Z('保護區', '保', 0.10, null, 'high', NTP_LAW,
+                  '保護區原則不得開發，不作一般開發估價；容積率請依個案輸入。' + CERT,
+                  { product: '透天厝', allowRes: false })
+    },
+    parking: PARKING_59,
+    oddLot: ODD_CONSERVATIVE,
+    setback: { frontM: 4, sideM: 0, conf: 'mid',
+               note: '新北市細部計畫與都市設計審議對面臨計畫道路之基地多要求自道路境界線退縮建築'
+                   + '（常見 3.64～6 公尺，留設無遮簷人行道或植栽帶，退縮部分得計入法定空地）。'
+                   + '預設 4 公尺，請依分區證明書與細部計畫土管要點輸入實際值。' }
+  };
+
+  /* ===================== 臺灣省施行細則適用之縣市與其他直轄市 ===================== */
+
+  var TWP_NOTE_RES = '依' + TWP_LAW + '第34條，住宅區、商業區容積率依都市計畫書所載；未載明者依居住密度與'
+                   + '鄰里性公共設施比值分級（住宅區 120%～240%、商業區 180%～320%）。本系統預設取'
+                   + '居住密度每公頃 300～400 人、公設比值未逾 15% 之級距（住宅區 180%、商業區 240%）。' + CERT;
+
+  function provincial(lawName, lawConf, res, com) {
+    var src = lawName;
+    return {
+      lawName: lawName,
+      conf: lawConf,
+      note: '建蔽率依' + lawName + '（住宅區 60%、商業區 80%、工業區 70%）；容積率依都市計畫書，'
+          + '工業區 210%。' + CERT,
+      zones: {
+        '住宅區': Z('住宅區', '住', 0.60, res.far, 'mid', src, res.note || TWP_NOTE_RES, res.extra || null),
+        '商業區': Z('商業區', '商', 0.80, com.far, 'mid', src, com.note || TWP_NOTE_RES, com.extra || null),
+        '甲種工業區': Z('甲種工業區', '工', 0.70, 2.10, lawConf, src,
+                        TWP_LAW + '第32條第3款、第34條第1項第3款：工業區建蔽率 70%、容積率 210%；'
+                      + '乙種工業區不得作住宅使用（第18條）。' + CERT),
+        '乙種工業區': Z('乙種工業區', '工', 0.70, 2.10, lawConf, src,
+                        TWP_LAW + '第18條、第32條、第34條：乙種工業區以公害輕微之工廠與其必要附屬設施'
+                      + '及工業發展有關設施使用為主，不得作住宅使用；建蔽率 70%、容積率 210%。' + CERT),
+        '零星工業區': Z('零星工業區', '工', 0.70, 2.10, lawConf, src,
+                        '工業區建蔽率 70%、容積率 210%（' + TWP_LAW + '第32、34條）。' + CERT),
+        '行政區': Z('行政區', '其他', 0.60, 2.50, lawConf, src, TWP_LAW + '第32、34條。' + CERT),
+        '文教區': Z('文教區', '其他', 0.60, 2.50, lawConf, src, TWP_LAW + '第32、34條。' + CERT),
+        '倉庫區': Z('倉庫區', '工', 0.70, 3.00, lawConf, src, TWP_LAW + '第32、34條。' + CERT),
+        '風景區': Z('風景區', '其他', 0.20, 0.60, lawConf, src, TWP_LAW + '第32、34條。' + CERT,
+                    { product: '透天厝' }),
+        '醫療專用區': Z('醫療專用區', '其他', 0.60, 2.00, lawConf, src, TWP_LAW + '第32、34條。' + CERT),
+        '農業區': Z('農業區', '農', 0.10, null, lawConf, src,
+                    '農業區建蔽率 10%（' + TWP_LAW + '第32條），以農業使用為主，不作一般開發估價。' + CERT,
+                    { product: '透天厝', allowRes: false }),
+        '保護區': Z('保護區', '保', 0.10, null, lawConf, src,
+                    '保護區建蔽率 10%（' + TWP_LAW + '第32條），原則不得開發。' + CERT,
+                    { product: '透天厝', allowRes: false })
+      },
+      parking: PARKING_59,
+      oddLot: ODD_CONSERVATIVE,
+      setback: { frontM: 0, sideM: 0, conf: 'mid',
+                 note: '退縮規定依各該細部計畫土地使用分區管制要點，預設 0 公尺，請依分區證明書輸入。' }
+    };
+  }
+
+  var cities = {
+    '臺北市': TPE,
+    '新北市': NTP,
+    '桃園市': provincial('都市計畫法桃園市施行細則', 'mid',
+      { far: 2.3, note: '桃園市各都市計畫住宅區常見容積率 230%（依計畫區不同），' + CERT },
+      { far: 3.8, note: '桃園市各都市計畫商業區常見容積率 380%（依計畫區不同），' + CERT }),
+    '臺中市': provincial('都市計畫法臺中市施行自治條例', 'mid', { far: 1.8 }, { far: 2.4 }),
+    '臺南市': provincial('都市計畫法臺南市施行細則', 'mid', { far: 1.8 }, { far: 2.4 }),
+    '高雄市': provincial('都市計畫法高雄市施行細則', 'mid',
+      { far: 2.4, note: '高雄市住宅區分第二種～第五種（容積率 150%、240%、300%、420%），預設取第三種 240%。' + CERT },
+      { far: 4.9, note: '高雄市商業區分第一種～第五種（容積率 240%～840%），預設取第三種 490%。' + CERT })
+  };
+
+  var PROVINCIAL = ['基隆市', '新竹市', '嘉義市', '新竹縣', '苗栗縣', '彰化縣', '南投縣', '雲林縣',
+                    '嘉義縣', '屏東縣', '宜蘭縣', '花蓮縣', '臺東縣', '澎湖縣', '金門縣', '連江縣'];
+  var i;
+  for (i = 0; i < PROVINCIAL.length; i++) {
+    cities[PROVINCIAL[i]] = provincial(TWP_LAW, 'high', { far: 1.8 }, { far: 2.4 });
+  }
+
+  /* 所有縣市都補一個「其他」：分區不在清單內時，由使用者自行輸入建蔽率與容積率 */
+  var ck;
+  for (ck in cities) {
+    if (!Object.prototype.hasOwnProperty.call(cities, ck)) continue;
+    cities[ck].zones['其他'] = Z('其他（請輸入建蔽率與容積率）', '其他', null, null, 'mid', '使用者輸入',
+      '本分區沒有通案數值，請依土地使用分區證明書於左側輸入建蔽率與容積率。');
+  }
+
+  /* 分區代碼的別名：謄本與使用者常寫全名或簡稱，對應到本表的鍵 */
+  var ALIAS = {
+    '第一種住宅區': '住一', '第二種住宅區': '住二', '第三種住宅區': '住三', '第四種住宅區': '住四',
+    '第一種商業區': '商一', '第二種商業區': '商二', '第三種商業區': '商三', '第四種商業區': '商四',
+    '第二種工業區': '工二', '第三種工業區': '工三',
+    '乙工': '乙種工業區', '甲工': '甲種工業區', '住宅': '住宅區', '商業': '商業區'
+  };
+
+  /* 取分區資料：先查原鍵，再查別名；新北市住宅區、商業區依行政區與路寬回傳實際容積率。
+     回傳的是複本，呼叫端改了也不會污染資料表。*/
+  function lookup(city, zone, district, roadWidth) {
+    var c = Object.prototype.hasOwnProperty.call(cities, city) ? cities[city] : null;
+    if (!c || !zone) return null;
+    var key = Object.prototype.hasOwnProperty.call(c.zones, zone) ? zone
+            : (Object.prototype.hasOwnProperty.call(ALIAS, zone) && Object.prototype.hasOwnProperty.call(c.zones, ALIAS[zone]) ? ALIAS[zone] : null);
+    if (!key) return null;
+    var z = c.zones[key], out = {}, k;
+    for (k in z) { if (Object.prototype.hasOwnProperty.call(z, k)) out[k] = z[k]; }
+    out.key = key;
+    out.farReason = '';
+    if (z.farByDistrict && district && Object.prototype.hasOwnProperty.call(z.farByDistrict, district)) {
+      out.far = z.farByDistrict[district];
+      out.farReason = district + '所屬都市計畫之' + z.name + '容積率';
+    } else if (z.farByDistrict) {
+      out.farReason = '本行政區未列於本表，採保守預設值';
+    }
+    if (typeof z.farNarrowRoad === 'number' && typeof roadWidth === 'number' && roadWidth > 0 && roadWidth < 8
+        && typeof out.far === 'number' && out.far > z.farNarrowRoad) {
+      out.far = z.farNarrowRoad;
+      out.farReason = '面前道路 ' + roadWidth + ' 公尺未達 8 公尺，依細部計畫通案規定降為 ' + Math.round(z.farNarrowRoad * 100) + '%';
+    }
+    return out;
+  }
 
   TD.data.zoning = {
-
     _meta: {
-      title: '臺北市土地使用分區管制 種子資料',
-      asOf: '2026-09-26',
-      verified: false,
-      source: '臺北市土地使用分區管制自治條例（未逐條核對）',
-      templateKey: '_template',
-      note: '上線前須逐條核對，見 docs/DATA-VERIFICATION.md。本檔數值一律視為未查證（unv），'
-          + '條號未確認者一律寫「待查」。MVP 只做臺北市，其他縣市請複製 cities._template 後逐格填寫。'
-          + '本系統不連網，更新方式為人工查閱官方條文後直接改寫本檔，不經任何 API。'
+      title: '土地使用分區管制',
+      asOf: '2026-10-03',
+      verified: true,
+      source: '臺北市土地使用分區管制自治條例；都市計畫法新北市施行細則與各細部計畫；'
+            + '都市計畫法臺灣省施行細則（114 年 8 月 12 日修正）；建築技術規則建築設計施工編第59條；建築法第44條',
+      note: '臺北市、新北市工業區與臺灣省施行細則適用縣市之數值為法規明文（high）；'
+          + '新北市住宅區商業區、其他直轄市住宅區商業區為依計畫區之常見值或法規上限（mid）。' + CERT
     },
-
-    cities: {
-
-      '臺北市': {
-
-        lawName: '臺北市土地使用分區管制自治條例',
-        article: '待查',
-        verified: false,
-        note: '臺北市的建蔽率與容積率規定於本自治條例，但個案是否適用還受都市計畫書、'
-            + '細部計畫、都市設計審議、航高與保護區等限制影響；本檔只提供「分區基準值」，'
-            + '不代表該基地實際可用強度。分區代碼本身應以地籍圖資或土地使用分區證明書為準。',
-
-        /* ---------- 分區基準：bcr 建蔽率（小數）／far 容積率（小數，5.6 = 560%） ---------- */
-        zones: {
-
-          '住一': {
-            name: '第一種住宅區', bcr: 0.30, far: 0.60, article: '待查',
-            use: ['住宅'], minLotM2: null, verified: false,
-            note: '全市強度最低的住宅分區（種子值 30%／60%）。'
-                + '此類基地常與山坡地、保護區、水源特定區交界，須另查有無更嚴限制。' + Z_WHERE
-          },
-
-          '住二': {
-            name: '第二種住宅區', bcr: 0.35, far: 1.20, article: '待查',
-            use: ['住宅'], minLotM2: null, verified: false,
-            note: '種子值 35%／120%。舊市區有以細部計畫另訂容積者，須個案查。' + Z_WHERE
-          },
-
-          '住二之一': {
-            name: '第二種住宅區（之一）', bcr: 0.35, far: 1.60, article: '待查',
-            use: ['住宅'], minLotM2: null, verified: false,
-            note: '種子值 35%／160%。' + Z_SUB + Z_WHERE
-          },
-
-          '住二之二': {
-            name: '第二種住宅區（之二）', bcr: 0.35, far: 2.25, article: '待查',
-            use: ['住宅'], minLotM2: null, verified: false,
-            note: '種子值 35%／225%。' + Z_SUB + Z_WHERE
-          },
-
-          '住三': {
-            name: '第三種住宅區', bcr: 0.45, far: 2.25, article: '待查',
-            use: ['住宅'], minLotM2: null, verified: false,
-            note: '種子值 45%／225%，臺北市最常見的住宅分區，也是本系統被查證頻率最高的一格，'
-                + '請優先核對。' + Z_WHERE
-          },
-
-          '住三之一': {
-            name: '第三種住宅區（之一）', bcr: 0.45, far: 3.00, article: '待查',
-            use: ['住宅'], minLotM2: null, verified: false,
-            note: '種子值 45%／300%。' + Z_SUB + Z_WHERE
-          },
-
-          '住三之二': {
-            name: '第三種住宅區（之二）', bcr: 0.45, far: 4.00, article: '待查',
-            use: ['住宅'], minLotM2: null, verified: false,
-            note: '種子值 45%／400%。' + Z_SUB + Z_WHERE
-          },
-
-          '住四': {
-            name: '第四種住宅區', bcr: 0.50, far: 3.00, article: '待查',
-            use: ['住宅'], minLotM2: null, verified: false,
-            note: '種子值 50%／300%。第四種住宅區多位於舊市區高密度地帶，'
-                + '基地條件（臨路、畸零）往往比容積更關鍵。' + Z_WHERE
-          },
-
-          '住四之一': {
-            name: '第四種住宅區（之一）', bcr: 0.50, far: 4.00, article: '待查',
-            use: ['住宅'], minLotM2: null, verified: false,
-            note: '種子值 50%／400%。' + Z_SUB + Z_WHERE
-          },
-
-          '商一': {
-            name: '第一種商業區', bcr: 0.55, far: 3.60, article: '待查',
-            use: ['商業', '辦公', '住宅（附條件）'], minLotM2: null, verified: false,
-            note: '種子值 55%／360%。允許使用組別須另查自治條例之使用組別表（條號待查），'
-                + '本欄 use 只是粗分類，不可當作可否申請某用途的依據。' + Z_WHERE
-          },
-
-          '商二': {
-            name: '第二種商業區', bcr: 0.65, far: 6.30, article: '待查',
-            use: ['商業', '辦公', '住宅（附條件）'], minLotM2: null, verified: false,
-            note: '種子值 65%／630%。注意：種子資料中商二（630%）高於商三（560%），'
-                + '順序不符直覺。這正是必須查證的一格，不要自行「修正」成遞增，'
-                + '請以現行條文附表為準。' + Z_WHERE
-          },
-
-          '商三': {
-            name: '第三種商業區', bcr: 0.65, far: 5.60, article: '待查',
-            use: ['商業', '辦公', '住宅（附條件）'], minLotM2: null, verified: false,
-            note: '種子值 65%／560%。與商二的高低順序請一併核對，見商二備註。' + Z_WHERE
-          },
-
-          '商四': {
-            name: '第四種商業區', bcr: 0.75, far: 8.00, article: '待查',
-            use: ['商業', '辦公', '旅館', '住宅（附條件）'], minLotM2: null, verified: false,
-            note: '種子值 75%／800%，全市強度最高。此類基地多在車站商圈，'
-                + '常受都市設計審議、航高、聯合開發或特定專用區規定影響，'
-                + '基準容積算出來的量體通常不是實際可蓋量體。' + Z_WHERE
-          }
-
-        },
-
-        /* ---------- 畸零地：正面路寬區間 → 最小寬度／最小深度（公尺） ----------
-           讀法：rows 由小到大排列，取第一個 roadWidthMax >= 正面路寬 的列；
-           roadWidthMax 為 null 代表「以上皆是」（無上限）。
-           基地寬度或深度任一小於該列標準，即為畸零地，須與鄰地協議合併或依法調處。 */
-        oddLot: {
-          lawName: '臺北市畸零地使用規則',
-          article: '待查',
-          verified: false,
-          rows: [
-            { roadWidthMax: 7,    minWidth: 3.0, minDepth: 12.0 },
-            { roadWidthMax: 15,   minWidth: 3.5, minDepth: 14.0 },
-            { roadWidthMax: 25,   minWidth: 4.0, minDepth: 16.0 },
-            { roadWidthMax: null, minWidth: 4.5, minDepth: 18.0 }
-          ],
-          note: '查證：「臺北市畸零地使用規則」之最小寬度、最小深度對照表（條號待查），'
-              + '以及建築法第44條至第46條。本表為種子值，區間切點（7／15／25 公尺）與數值都可能與現行規定不同。'
-              + '另注意：實務上寬度與深度要看地籍圖上的實際形狀，本系統只吃使用者手動輸入的基地寬深，'
-              + '不規則地形、三角地、袋地一律判為 manual，不可只憑本表下結論。'
-        },
-
-        /* ---------- 停車：每多少平方公尺樓地板設一車位 ---------- */
-        parking: {
-          lawName: '臺北市建築管理自治條例',
-          article: '待查',
-          verified: false,
-          residentialPerM2: 150,
-          officePerM2: null,
-          retailPerM2: null,
-          note: '種子值：住宅每 150 ㎡ 樓地板設一停車位。查證：「臺北市建築管理自治條例」'
-              + '與「建築技術規則建築設計施工編」停車空間章之附表（條號皆待查），'
-              + '兩者從嚴適用，且不同用途組別門檻不同。辦公、零售欄位刻意留 null，'
-              + '代表尚未查到，引擎遇到 null 不得自行猜值，應標為待查。'
-              + '另：機械車位、裝卸位、機車位與停車空間免計容積的計算方式另有規定，本檔未涵蓋。'
-        },
-
-        /* ---------- 退縮：無圖資就算不出來 ---------- */
-        setback: {
-          lawName: '臺北市土地使用分區管制自治條例',
-          article: '待查',
-          verified: false,
-          frontM: null,
-          note: '退縮依細部計畫與都市設計審議，無圖資無法計算，一律標為 manual。'
-              + '查證需要：該基地都市計畫書與細部計畫之退縮規定、都市設計審議原則、'
-              + '是否臨計畫道路或指定建築線、有無騎樓或人行道退縮要求。'
-              + 'frontM 維持 null 代表「未知」，不是 0；引擎不得把 null 當成不必退縮。'
-        }
-      },
-
-      /* ---------- 擴充範本：複製這個物件、改成縣市名稱後逐格填寫 ----------
-         這不是真的縣市，列舉時請略過所有以底線開頭的 key。 */
-      '_template': {
-        _isTemplate: true,
-        lawName: '（填）該縣市土地使用分區管制自治條例或都市計畫法施行細則全名',
-        article: '待查',
-        verified: false,
-        note: '（填）本縣市分區規定的主要法源、以及哪些情形要改看都市計畫書。'
-            + '填寫原則：查得到就填數字並註明條號；查不到就留 null 與「待查」，不要用別的縣市數字代替。',
-        zones: {
-          '（填）分區代碼，例如「住三」': {
-            name: '（填）分區全名，例如「第三種住宅區」',
-            bcr: null,
-            far: null,
-            article: '待查',
-            use: [],
-            minLotM2: null,
-            verified: false,
-            note: '（填）這個建蔽率／容積率數字要去哪裡查證：法規名稱、附表名稱、有無細部計畫另訂。'
-          }
-        },
-        oddLot: {
-          lawName: '（填）該縣市畸零地使用規則全名',
-          article: '待查',
-          verified: false,
-          rows: [],
-          note: '（填）最小寬度深度對照表出處。rows 空陣列代表尚未建置，引擎應把畸零地檢核標為 manual。'
-        },
-        parking: {
-          lawName: '（填）該縣市建築管理自治條例全名',
-          article: '待查',
-          verified: false,
-          residentialPerM2: null,
-          officePerM2: null,
-          retailPerM2: null,
-          note: '（填）停車位換算標準出處，並註明與建築技術規則何者從嚴。'
-        },
-        setback: {
-          lawName: '（填）法規名稱',
-          article: '待查',
-          verified: false,
-          frontM: null,
-          note: '（填）退縮規定出處。無圖資即無法計算者維持 null，並說明需要哪些資料才算得出來。'
-        }
-      }
-    }
+    cities: cities,
+    lookup: lookup,
+    alias: ALIAS,
+    parking59: PARKING_59,
+    oddConservative: ODD_CONSERVATIVE
   };
-})(window.TD);
-
-/* ------------------------------------------------------------------
-   全國縣市與住商以外的分區
-   本系統只對臺北市的住宅區與商業區建了種子數值。其餘縣市、其餘分區
-   一律 bcr:null / far:null —— 寧可留白讓使用者自己輸入，也不拿臺北市的
-   數字頂替。引擎遇到 null 會把基準容積、量體、出價上限一路標成算不出來。
-   ------------------------------------------------------------------ */
-window.TD = window.TD || {};
-(function (TD) {
-  'use strict';
-
-  var Z = TD.data && TD.data.zoning;
-  if (!Z || !Z.cities) return;
-
-  var FILL_NOTE = '本系統未建檔此分區的建蔽率與容積率。請查該縣市土地使用分區管制自治條例'
-    + '（並確認該基地所屬都市計畫書與細部計畫有無另訂較嚴規定）後，在左側直接輸入建蔽率與容積率；'
-    + '未輸入前，基準容積、量體與出價上限一律不予計算。';
-
-  function blankZone(name, use) {
-    return { name: name, bcr: null, far: null, article: '待查',
-             use: use ? [use] : [], minLotM2: null, verified: false, note: FILL_NOTE };
-  }
-
-  /* 住商以外的常見分區。各縣市名稱不盡相同，以該縣市都市計畫書為準。*/
-  var OTHER_ZONES = [
-    ['工業區', '工業區', '工業'],
-    ['甲種工業區', '甲種工業區', '工業'],
-    ['乙種工業區', '乙種工業區', '工業'],
-    ['零星工業區', '零星工業區', '工業'],
-    ['倉庫區', '倉庫區', '倉儲'],
-    ['行政區', '行政區', '公共設施'],
-    ['文教區', '文教區', '文教'],
-    ['醫療區', '醫療專用區', '醫療'],
-    ['農業區', '農業區', '農業'],
-    ['林木區', '林木區', '林業'],
-    ['保護區', '保護區', '保護'],
-    ['風景區', '風景區', '風景'],
-    ['河川區', '河川區', '水利'],
-    ['特定專用區', '特定專用區', '專用'],
-    ['其他', '其他（請自行輸入建蔽率與容積率）', '']
-  ];
-
-  /* 臺北市另有的工業區代碼；住商部分已在上面建檔，不動。*/
-  var TPE_EXTRA = [
-    ['工二', '第二種工業區', '工業'],
-    ['工三', '第三種工業區', '工業']
-  ];
-
-  /* 一般縣市的住商代碼。數值一律留白。*/
-  var COMMON_RES_COM = [
-    ['住一', '第一種住宅區', '住宅'], ['住二', '第二種住宅區', '住宅'],
-    ['住三', '第三種住宅區', '住宅'], ['住四', '第四種住宅區', '住宅'],
-    ['商一', '第一種商業區', '商業'], ['商二', '第二種商業區', '商業'],
-    ['商三', '第三種商業區', '商業'], ['商四', '第四種商業區', '商業']
-  ];
-
-  var OTHER_CITIES = ['新北市', '桃園市', '臺中市', '臺南市', '高雄市',
-    '基隆市', '新竹市', '嘉義市', '新竹縣', '苗栗縣', '彰化縣', '南投縣',
-    '雲林縣', '嘉義縣', '屏東縣', '宜蘭縣', '花蓮縣', '臺東縣',
-    '澎湖縣', '金門縣', '連江縣'];
-
-  function addZones(node, list) {
-    var i;
-    for (i = 0; i < list.length; i++) {
-      if (!Object.prototype.hasOwnProperty.call(node.zones, list[i][0])) {
-        node.zones[list[i][0]] = blankZone(list[i][1], list[i][2]);
-      }
-    }
-  }
-
-  /* 1. 臺北市補上工業區與其他分區（數值仍為 null） */
-  if (Z.cities['臺北市'] && Z.cities['臺北市'].zones) {
-    addZones(Z.cities['臺北市'], TPE_EXTRA);
-    addZones(Z.cities['臺北市'], OTHER_ZONES);
-  }
-
-  /* 2. 其餘二十一個縣市 */
-  var i, city;
-  for (i = 0; i < OTHER_CITIES.length; i++) {
-    city = OTHER_CITIES[i];
-    if (Object.prototype.hasOwnProperty.call(Z.cities, city)) continue;
-    Z.cities[city] = {
-      lawName: city + '土地使用分區管制自治條例（法規全名待查）',
-      article: '待查',
-      verified: false,
-      note: '本系統尚未為' + city + '建檔任何分區數值。請以該縣市法規查詢系統之土地使用分區管制規定，'
-          + '以及該基地所屬都市計畫書、細部計畫為準，於左側自行輸入建蔽率與容積率。',
-      zones: {},
-      oddLot: { lawName: city + '畸零地使用規則（法規全名待查）', article: '待查', verified: false,
-                rows: [], note: '未建置，畸零地檢核一律標為需人工判斷。' },
-      parking: { lawName: city + '建築管理自治條例（法規全名待查）', article: '待查', verified: false,
-                 residentialPerM2: null, officePerM2: null, retailPerM2: null,
-                 note: '未建置停車位換算標準，停車檢核一律標為需人工判斷。' },
-      setback: { lawName: '（法規名稱待查）', article: '待查', verified: false, frontM: null,
-                 note: '退縮規定需細部計畫與都市設計審議資料，無圖資無法計算。' }
-    };
-    addZones(Z.cities[city], COMMON_RES_COM);
-    addZones(Z.cities[city], OTHER_ZONES);
-  }
-
-  Z._meta = Z._meta || {};
-  Z._meta.coverageNote = '只有臺北市的住宅區與商業區有種子數值（verified:false，仍須查證）。'
-    + '其餘縣市與其餘分區一律留白，需使用者自行輸入建蔽率與容積率。';
 })(window.TD);

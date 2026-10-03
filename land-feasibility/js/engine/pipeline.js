@@ -8,10 +8,10 @@ window.TD = window.TD || {};
   /* ------------------------------------------------------------------
      設計說明（複核者請先讀）
 
-     1. 執行順序（SPEC 第 7 節）：
-          m1 → m2 → m3 → m4(粗估) → m5 → m6 → m4(重算並覆蓋) → m7 → m8
-        m4 跑兩次是刻意的：第一次 ctx.m6 還不存在，單價用 TD.data.cost 的保守預設；
-        m6 算出單價後再跑一次覆蓋，讓獎勵組合的淨效益排序用真正的單價。
+     1. 執行順序：
+          m1 → m2 → m3 → m4(粗估) → m5 → m6 → m4(重算並覆蓋) →〔組合改變時 m5 → m6 重算〕→ m7 → m8
+        m4 跑兩次：第一次直接讀本區實價登錄的預售單價；m6 算出採用單價後（可能是使用者輸入或匯入案例）
+        再跑一次覆蓋。第二次選出的組合若與第一次不同，量體與收入要跟著重算，否則下游會用到舊組合的容積。
      2. **任何模組丟例外都不能讓畫面掛掉**：每個模組各自包 try/catch，
         失敗時 ctx.mN = { error:'訊息' } 並繼續跑後面的模組。
         下游模組本身就設計成「上游缺值時安全降級」，所以中斷一個不會讓整串變成 NaN。
@@ -206,9 +206,7 @@ window.TD = window.TD || {};
        p.overrides['m4.pct'] 同時改寫兩處、勾一次「已複核」等於複核兩個數。
        first 本身保持原 key 不動，因為第二次呼叫失敗時 ctx.m4 要退回它。 */
     ctx.m4Rough = rekeyV(first, 'm4.', 'm4rough.');
-    notes.push('m4 跑兩次：第一次（ctx.m4Rough）在 m6 之前，單價用 TD.data.cost 的保守預設；'
-             + '第二次以 m6 的單價重算並覆蓋 ctx.m4。兩次的組合排序可能不同，這是預期行為。'
-             + 'ctx.m4Rough 內的 V key 已改為 m4rough.*，與正式的 m4.* 不相撞。');
+    notes.push('容積獎勵跑兩次：第一次以本區實價登錄預售單價排序，第二次以收入段採用的單價重算並覆蓋。');
 
     step(ctx, 'm5', eng.m5, p, errors);
     step(ctx, 'm6', eng.m6, p, errors);
@@ -218,8 +216,13 @@ window.TD = window.TD || {};
     if (second && second.error && first && !first.error) {
       /* 重算失敗就退回粗估版，總比整段沒有獎勵組合好；但一定要說出來 */
       ctx.m4 = first;
-      notes.push('m4 的第二次呼叫失敗（' + second.error + '），已退回第一次的粗估結果。'
-               + '此時獎勵組合的排序用的是保守預設單價，不是 m6 算出來的單價，請勿據此對外報告。');
+      notes.push('容積獎勵第二次計算失敗（' + second.error + '），已退回第一次的結果。');
+    } else if (second && !second.error && first && !first.error && first.chosen && second.chosen
+               && first.chosen.id !== second.chosen.id) {
+      /* 組合改變：量體與收入依新組合重算 */
+      step(ctx, 'm5', eng.m5, p, errors);
+      step(ctx, 'm6', eng.m6, p, errors);
+      notes.push('以收入段單價重算後，容積獎勵組合由「' + first.chosen.id + '」改為「' + second.chosen.id + '」，量體與收入已依新組合重算。');
     }
 
     step(ctx, 'm7', eng.m7, p, errors);

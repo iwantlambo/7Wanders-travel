@@ -1,4 +1,4 @@
-/* m8 財務回推：以月現金流與二分法，從報酬目標反解「這塊地最多能出多少錢」，並給敏感度、損益兩平與情境。 */
+/* M8 財務回推：以月現金流與二分法，從報酬目標反解土地出價上限（走人價）與建議出價，並與本區土地成交行情比較，附敏感度、損益兩平、情境與壓力測試。 */
 window.TD = window.TD || {};
 (function (TD) {
   'use strict';
@@ -6,7 +6,7 @@ window.TD = window.TD || {};
   TD.engine = TD.engine || {};
 
   var PING = TD.PING || 3.3057851239669;
-  var SRC = '本模組為純財務運算，輸入來自 m5 量體、m6 收入、m7 成本（皆為 low／unv 等級的假設）';
+  var SRC = '月現金流回推（輸入：量體段可售坪與車位、收入段實價登錄單價、成本段 2026 年營建行情與融資條件）';
 
   /* ---- 小工具 ---- */
   function raw(x) { return TD.raw ? TD.raw(x) : x; }
@@ -156,7 +156,7 @@ window.TD = window.TD || {};
 
   /* 前置條件不足時的降級輸出：欄位齊全、數值一律 null，絕不回 NaN。 */
   function degraded(reason) {
-    function nullV(key) { return TD.V(key, null, 'low', SRC, '無法計算', reason); }
+    function nullV(key) { return TD.V(key, null, 'mid', SRC, '無法計算', reason); }
     return {
       landCap: nullV('m8.landCap'),
       landCapPerPing: nullV('m8.landCapPerPing'),
@@ -168,10 +168,13 @@ window.TD = window.TD || {};
       cashflow: [],
       sensitivity: emptySens(),
       stress: emptyStress(reason),
-      walkAway: nullV('m8.walkAway'),
-      walkAwayFrom: '無法計算',
-      walkAwayIrrTarget: null,
-      walkAwayStatus: null,
+      walkAway: null,
+      bidTarget: nullV('m8.bidTarget'),
+      bidTargetPerPing: null,
+      bidFrom: '無法計算',
+      bidIrrTarget: null,
+      bidStatus: null,
+      benchmark: null,
       stressRule: STRESS_RULE,
       breakeven: {
         priceDropPct: nullV('m8.bePriceDrop'),
@@ -249,10 +252,10 @@ window.TD = window.TD || {};
       setupNotes.push('ctx.m5.unitsCount 不可用，戶數以可售坪 ÷ 平均單坪推估為 ' + units
         + ' 戶；去化曲線因此只是形狀正確，數量未經量體確認。');
     }
-    var absorbPerMonth = num(p.m6 && p.m6.absorbPerMonth, 8);
+    var absorbPerMonth = num(m6.absorbPerMonth, num(p.m6 && p.m6.absorbPerMonth, 4));
     if (!(absorbPerMonth > 0)) {
-      absorbPerMonth = 8;
-      setupNotes.push('p.m6.absorbPerMonth 不是正數，已回落為每月 8 戶。');
+      absorbPerMonth = 4;
+      setupNotes.push('每月去化戶數不是正數，已回落為每月 4 戶。');
     }
 
     /* ---- 成本與財務參數（一律取自 m7，確保兩個模組用同一組數字）---- */
@@ -264,6 +267,8 @@ window.TD = window.TD || {};
     var marketingRate = num(par.marketingRate, 0.05);
     var taxRateOther = num(par.taxRateOther, 0.01);
     var profitTaxRate = num(par.profitTaxRate, 0.20);
+    var businessTaxRate = num(par.businessTaxRate, 0.05);
+    var housePortion = num(par.housePortion, 0.35);
     var landLTV = num(par.landLTV, 0.5);
     var landRate = num(par.landRate, 0.028);
     var constLTV = num(par.constLTV, 0.7);
@@ -335,7 +340,9 @@ window.TD = window.TD || {};
       var sgaPerMonth = baseHorizon > 0 ? (R * sgaRate) / baseHorizon : 0;
       var sga = sgaPerMonth * horizon;
       var marketing = R * marketingRate;
-      var taxOther = R * taxRateOther;
+      /* 其他稅費規費 ＋ 營業稅（只就房屋部分課徵，售價含稅） */
+      var businessTax = R * housePortion * businessTaxRate / (1 + businessTaxRate);
+      var taxOther = R * taxRateOther + businessTax;
 
       var conSpend = zeros(horizon), softOut = zeros(horizon), taxOut = zeros(horizon);
       var salesIn = zeros(horizon), landFlow = zeros(horizon), conFlow = zeros(horizon);
@@ -441,7 +448,7 @@ window.TD = window.TD || {};
         buildMonths: build, doneM: doneM, horizon: horizon,
         unsoldAtEnd: unsold, soldOutMonth: ab.soldOutMonth,
         costDetail: { hard: hardSpread + demoC, design: design, sga: sga,
-                      marketing: marketing, bonusCost: bonusCost, taxOther: taxOther }
+                      marketing: marketing, bonusCost: bonusCost, taxOther: taxOther, businessTax: businessTax }
       };
     }
 
@@ -502,7 +509,8 @@ window.TD = window.TD || {};
       handoverMonths: handoverMonths, presaleStart: presaleStart,
       baseHorizon: baseHorizon, sgaRate: sgaRate,
       landLTV: landLTV, landRate: landRate, constLTV: constLTV, constRate: constRate,
-      profitTaxRate: profitTaxRate, taxRateOther: taxRateOther
+      profitTaxRate: profitTaxRate, taxRateOther: taxRateOther,
+      businessTaxRate: businessTaxRate, housePortion: housePortion
     };
   }
 
@@ -679,78 +687,82 @@ window.TD = window.TD || {};
       + '出價上限的定義就是「基準情境剛好打到目標報酬」的價格，所以任何不利情境都必然低於目標值，'
       + '「通過」只代表仍有正報酬與正淨利，不代表仍達成目標。要看達標與否請把土地成本改為實際議定價後重算。');
 
-    /* ---- 5c. 走人價：年化 IRR 門檻再加 3 個百分點後回推的土地上限 ---- */
-    var WALK_IRR_ADD = 0.03;
-    var walkIrrTarget = targetIrr + WALK_IRR_ADD;
-    var walkAway = null, walkFrom = '', walkStatus = null, rw = null;
+    /* ---- 5c. 建議出價：IRR 門檻再加 3 個百分點後回推的土地價（談判起價，保留緩衝） ----
+       名詞：出價上限 ＝ 走人價。超過這個價格就達不到報酬目標，應該放棄（walk away）。
+             建議出價 ＝ 比走人價低、保留 3 個百分點 IRR 緩衝的價格，作為談判的出價目標。*/
+    var BID_IRR_ADD = 0.03;
+    var bidIrrTarget = targetIrr + BID_IRR_ADD, bidMarginTarget = targetMargin + BID_IRR_ADD;
+    var bidTarget = null, bidFrom = '', bidStatus = null, rbI = null, rbM = null;
     try {
-      rw = mdl.solveOne(function (L) {
-        var rr = mdl.run(L, {});
-        return (rr && isNum(rr.irr)) ? rr.irr : NaN;
-      }, walkIrrTarget);
-    } catch (eW) { rw = null; }
-    walkStatus = (rw && rw.status) ? rw.status : 'error';
-    if (rw && isNum(rw.v)) {
-      walkAway = rw.v;
-      walkFrom = '年化 IRR 門檻由 ' + fpct(targetIrr, 1) + ' 提高到 ' + fpct(walkIrrTarget, 1)
-        + '（加 ' + fpct(WALK_IRR_ADD, 0) + ' 緩衝）後，以同一份月現金流重算的土地上限';
-      if (rw.status === 'above') {
-        notes.push('走人價的解落在搜尋上界（總銷 × 0.8），回傳值是上界不是真正的解，請人工複核。');
+      rbI = mdl.solveOne(function (L) { var rr = mdl.run(L, {}); return (rr && isNum(rr.irr)) ? rr.irr : NaN; }, bidIrrTarget);
+      rbM = mdl.solveOne(function (L) { var rr = mdl.run(L, {}, true); return (rr && isNum(rr.margin)) ? rr.margin : NaN; }, bidMarginTarget);
+    } catch (eW) { rbI = null; rbM = null; }
+    bidStatus = (rbI && rbM) ? rbI.status + '/' + rbM.status : 'error';
+    if (rbI && rbM && rbI.status === 'ok' && rbM.status === 'ok' && isNum(rbI.v) && isNum(rbM.v)) {
+      bidTarget = Math.min(rbI.v, rbM.v, landCap === null ? Infinity : landCap);
+      bidFrom = '年化 IRR ' + fpct(bidIrrTarget, 0) + '、稅後淨利率 ' + fpct(bidMarginTarget, 0)
+              + '（各比目標多 3 個百分點）回推的土地價';
+    }
+    if (bidTarget === null && landCap !== null) {
+      var conCap = null, ci;
+      for (ci = 0; ci < scenarios.length; ci++) {
+        if (scenarios[ci].id === 'con' && isNum(scenarios[ci].landCap)) conCap = scenarios[ci].landCap;
       }
-    } else {
-      notes.push('年化 IRR 門檻提高到 ' + fpct(walkIrrTarget, 1) + ' 後求不出土地上限（狀態 '
-        + walkStatus + '），代表本案在該報酬要求下不可行，請不要把後面的替代值當成走人價。');
+      if (conCap !== null && conCap < landCap) {
+        bidTarget = conCap;
+        bidFrom = '加嚴 3 個百分點回推無解，改用保守情境（售價 −10%、營建 +5%）的上限';
+      } else {
+        bidTarget = landCap * 0.9;
+        bidFrom = '以走人價的九成作為談判起價（加嚴回推無解）';
+      }
     }
-    /* 出價上限本身無解時走人價一律不輸出：沒有上限可對照，任何單獨出現的價格都會被當成可以出的價格。 */
-    if (landCap === null) {
-      walkAway = null;
-      walkFrom = '出價上限無解，走人價不予輸出';
-    }
-    var conCap = null, ci;
-    for (ci = 0; ci < scenarios.length; ci++) {
-      if (scenarios[ci].id === 'con' && isNum(scenarios[ci].landCap)) conCap = scenarios[ci].landCap;
-    }
-    if (walkAway === null && landCap !== null && conCap !== null) {
-      walkAway = conCap;
-      walkFrom = 'IRR 門檻加 ' + fpct(WALK_IRR_ADD, 0) + ' 回推無解，改用保守情境（售價 −10%、營建 +5%）重算的上限代替';
-    } else if (walkAway === null && landCap !== null) {
-      walkAway = landCap;
-      walkFrom = 'IRR 門檻回推與保守情境都無解，走人價改用基準情境的出價上限';
-      notes.push('走人價的兩種算法都無解，改用基準情境的出價上限表示，這是偏寬鬆的替代值，'
-        + '請以「無解」本身為警訊，不要照著它出價。');
-    }
-    if (walkAway !== null && landCap !== null && walkAway > landCap) {
-      notes.push('走人價（' + fmoney(walkAway) + '）高於出價上限（' + fmoney(landCap)
-        + '），通常是求解落在搜尋上界或情境成本方向相反所致，請人工複核。');
+    if (landCap === null) { bidTarget = null; bidFrom = '出價上限無解，不提供建議出價'; }
+
+    /* ---- 5d. 與本區同分區土地成交行情比較 ---- */
+    var mland = (ctx.m6 && ctx.m6.market && ctx.m6.market.land) ? ctx.m6.market.land : null;
+    var benchmark = null;
+    if (mland && isNum(mland.perPing) && sitePing > 0) {
+      var mTotal = mland.perPing * sitePing;
+      var atM = null;
+      try { atM = mdl.run(mTotal, {}); } catch (eM) { atM = null; }
+      var ratio = (perPingCap !== null) ? perPingCap / mland.perPing : null;
+      var lowQ = mland.conf === 'low';
+      var verdict = ratio === null ? '出價上限無解'
+        : lowQ ? '本區同分區土地成交多為小面積或持分交易，行情僅供參考（出價上限為行情的 ' + TD.fmt.n(ratio * 100, 0) + '%）'
+        : ratio >= 1.05 ? '出價上限高於市場行情：依目前假設，以市價買入仍可達到報酬目標'
+        : ratio >= 0.95 ? '出價上限約等於市場行情：以市價買入剛好達到報酬目標，沒有緩衝'
+        : '出價上限低於市場行情：以市價買入達不到報酬目標，須提高售價、降低成本或爭取更多容積';
+      benchmark = {
+        perPing: mland.perPing, p25: mland.p25, p50: mland.p50, p75: mland.p75, n: mland.n, label: mland.label, conf: mland.conf,
+        comps: mland.comps || [], totalAtMarket: mTotal, capVsMarket: ratio, verdict: verdict,
+        irrAtMarket: atM ? atM.irr : null, marginAtMarket: atM ? atM.margin : null, profitAtMarket: atM ? atM.profit : null
+      };
+      notes.push('本區土地行情 ' + TD.fmt.n(mland.perPing / 1e4, 1) + ' 萬／坪（' + mland.label + '）；' + verdict
+        + (atM && isNum(atM.margin) ? '。以行情價 ' + fmoney(mTotal) + ' 買入時稅後淨利率 ' + fpct(atM.margin, 1)
+          + (isNum(atM.irr) ? '、年化 IRR ' + fpct(atM.irr, 1) : '') : '') + '。');
     }
 
     /* ---- 6. 固定備註：每一條都是會讓人誤判的簡化，一定要寫出來 ---- */
-    notes.push('出價上限 ＝ 同時滿足「年化 IRR ≥ ' + fpct(targetIrr, 1) + '」與「稅後淨利 ÷ 總銷 ≥ '
-      + fpct(targetMargin, 1) + '」的最大土地總價，兩者取小。目標值來自 p.m8.targetIrr／targetMargin。');
+    notes.push('出價上限（走人價）＝ 同時滿足「年化 IRR ≥ ' + fpct(targetIrr, 1) + '」與「稅後淨利 ÷ 總銷 ≥ '
+      + fpct(targetMargin, 1) + '」的最大土地總價，兩者取小；賣方開價高於此數就應放棄。'
+      + '建議出價是再保留 ' + fpct(BID_IRR_ADD, 0) + ' IRR 緩衝的談判目標。報酬目標可在左欄「報酬目標」調整。');
     notes.push('IRR 是權益 IRR（土融與建融的動撥、計息與清償都已在現金流內淨額處理），'
       + '不是無槓桿 IRR；成數或利率一改，IRR 會明顯位移。');
-    notes.push('本案現金流末期為負（餘屋管銷與利潤稅落在交屋之後），'
-      + 'TD.math.irrMonthly 的固定區間在這種形狀下會回 null，'
-      + 'm8 改以掃描變號區間取最大的根當月報酬率再年化，數學上與只變號一次的現金流一致。');
-    notes.push('cashflow 每列除契約列出的 m／land／construction／sales／interest／net／cum 之外，'
-      + '另有 soft（軟成本）與 tax（稅費，含最後一月的利潤稅）兩欄，net 是六項流量之和。'
-      + 'UI 只顯示契約四欄的話橫向會加不回 net，請照 cashflowCols 一併顯示 soft 與 tax。');
-    notes.push('稅只用簡化利潤稅率 ' + fpct(mdl.profitTaxRate, 1) + ' 乘稅前淨利（虧損不退稅），'
-      + '外加以總銷比率估的其他稅費 ' + fpct(mdl.taxRateOther, 2) + '。'
-      + '土地增值稅、房地合一稅、營業稅、印花稅與未分配盈餘加徵一律未計，'
-      + '必須由會計師依交易架構（買地自建、合建分屋、信託）試算。');
+    notes.push('稅：營業稅以售價中房屋部分 ' + fpct(mdl.housePortion, 0) + ' 課 5%（土地免徵）；'
+      + '其他稅費規費以總銷 ' + fpct(mdl.taxRateOther, 1) + ' 計；營利事業所得稅以稅前淨利 × '
+      + fpct(mdl.profitTaxRate, 0) + ' 計（所得稅法第24條之5，虧損不退稅）。'
+      + '土地增值稅由賣方負擔；未分配盈餘加徵 5% 視股利政策另計。');
     notes.push('土地款假設 t0 一次付清、自備 ' + fpct(1 - mdl.landLTV, 0) + '，土融 '
       + fpct(mdl.landLTV, 0) + ' 自 t0 起按月計息、交屋月一次清償。'
       + '實務上土地款常分期（簽約、完稅、過戶），分期會讓 IRR 變好，本模型偏保守。');
-    notes.push('建融依 S 曲線動撥，利息用期中平均餘額（月初餘額 ＋ 本月動撥 ÷ 2）× 年利率 ÷ 12，'
-      + '與 m7.financeCost 同慣例；m8 自行重算利息，沒有把 m7.financeCost 再加一次。');
+    notes.push('建融依 S 曲線動撥，利息用期中平均餘額（月初餘額 ＋ 本月動撥 ÷ 2）× 年利率 ÷ 12。');
     notes.push('收款假設：簽約當月收 15%（訂、簽、開），交屋月收其餘 85%，'
       + '交屋後才成交者一次收足 100%。實際訂簽開比例與工程期款依契約而異。');
     if (atCap.unsoldAtEnd > 0) {
       notes.push('以每月 ' + fn(mdl.absorbPerMonth, 1) + ' 戶去化，到期末（第 '
         + atCap.doneM + ' 月交屋結案）仍有 ' + fn(atCap.unsoldAtEnd, 1) + ' 戶未售出。'
         + '本模型把未完銷的部分一律認在最後一個月收足，實務上餘屋會繼續壓利息與管銷，'
-        + '因此這裡的出價上限對去化不佳的情形偏樂觀，請一併看 absorb 那一項敏感度。');
+        + '因此這裡的出價上限對去化不佳的情形偏樂觀，請一併看「去化速度」那一項敏感度。');
     }
     notes.push('時程：規劃請照 ' + mdl.planMonths + ' 個月（已含制度審議與獎勵加計）＋ 施工 '
       + mdl.buildMonths + ' 個月，完工於第 ' + (mdl.planMonths + mdl.buildMonths)
@@ -760,9 +772,8 @@ window.TD = window.TD || {};
     notes.push('管銷以「每月費率 × 月數」計（月費率由總銷 × ' + fpct(mdl.sgaRate, 2)
       + ' ÷ 基準月數 ' + mdl.baseHorizon + ' 反推），因此工期一拉長管銷總額同步上升，'
       + '不是把同一筆總額往後遞延。');
-    notes.push('這是「出價上限」，不是市價、不是建議出價，也不是估價報告。'
-      + '上游假設（m5 量體未經建築師簽證、m6 單價為合成或推估、m7 成本為種子資料）都還沒查證，'
-      + '信心一律不高於 low，必須人工複核後才能拿去談價。');
+    notes.push('出價上限是依本案假設回推的開發商可負擔地價，不是估價報告；量體須經建築師檢討、'
+      + '單價與成本請以最新實價登錄與發包報價更新後再定案。');
 
     /* ---- 7. 組裝輸出 ---- */
     var capFormula = 'IRR 條件 ' + (byIrr === null ? '無解' : fmoney(byIrr))
@@ -773,11 +784,11 @@ window.TD = window.TD || {};
       + atCap.costDetail.marketing + atCap.costDetail.bonusCost;
 
     return {
-      landCap: TD.V('m8.landCap', landCap, 'low', SRC, capFormula,
-        '土地總價上限（含土地取得本身，不含契稅、代書與仲介費）。超過此價即達不到設定的報酬門檻。'
-        + '依契約信心不得高於 low：這個數字是上游每一項假設相乘的結果。'),
+      landCap: TD.V('m8.landCap', landCap, 'mid', SRC, capFormula,
+        '出價上限＝走人價：土地總價（不含契稅、代書與仲介費）超過此數，就達不到設定的報酬目標，應該放棄。'
+        + '它是上游量體、單價與成本假設相乘的結果，請搭配敏感度與本區土地行情一起看。'),
 
-      landCapPerPing: TD.V('m8.landCapPerPing', perPingCap, 'low', SRC,
+      landCapPerPing: TD.V('m8.landCapPerPing', perPingCap, 'mid', SRC,
         (perPingCap === null) ? '無法計算'
           : fmoney(landCap) + ' ÷ 基地 ' + fn(sitePing, 2) + ' 坪 ＝ ' + fn(perPingCap, 0) + ' 元/坪',
         '換算每坪只是方便與行情比較，實際出價仍以總價與付款條件談。'),
@@ -785,19 +796,19 @@ window.TD = window.TD || {};
       landCapByIrr: byIrr,
       landCapByMargin: byMargin,
 
-      irrAtCap: TD.V('m8.irrAtCap', atCap.irr, 'low', SRC,
+      irrAtCap: TD.V('m8.irrAtCap', atCap.irr, 'mid', SRC,
         atCap.irr === null ? '現金流沒有正負號變化，IRR 無解'
           : '土地價 ' + fmoney(capForFlow) + ' 下，月 IRR ' + fpct(atCap.monthlyIrr, 3)
             + ' 年化 ＝ ' + fpct(atCap.irr, 2),
         '權益 IRR。兩個條件哪一個較緊，這裡就會等於那個目標值，另一個會比目標寬鬆。'),
 
-      marginAtCap: TD.V('m8.marginAtCap', atCap.margin, 'low', SRC,
+      marginAtCap: TD.V('m8.marginAtCap', atCap.margin, 'mid', SRC,
         atCap.margin === null ? '總銷為 0，無法計算'
           : '稅後淨利 ' + fmoney(atCap.profit) + ' ÷ 總銷 ' + fmoney(atCap.revenue)
             + ' ＝ ' + fpct(atCap.margin, 2),
         '稅後淨利率。稅只含簡化利潤稅，未含土增稅與房地合一稅。'),
 
-      profitAtCap: TD.V('m8.profitAtCap', atCap.profit, 'low', SRC,
+      profitAtCap: TD.V('m8.profitAtCap', atCap.profit, 'mid', SRC,
         '總銷 ' + fmoney(atCap.revenue) + ' − 土地 ' + fmoney(capForFlow)
         + ' − 營建 ' + fmoney(atCap.costDetail.hard) + ' − 軟成本 ' + fmoney(softAtCap)
         + ' − 利息 ' + fmoney(atCap.interestTotal)
@@ -810,15 +821,15 @@ window.TD = window.TD || {};
       sensitivity: sensitivity,
 
       breakeven: {
-        priceDropPct: TD.V('m8.bePriceDrop', bePrice, 'low', SRC,
+        priceDropPct: TD.V('m8.bePriceDrop', bePrice, 'mid', SRC,
           bePrice === null ? '無解'
             : '出價上限下，售價下跌 ' + fpct(bePrice, 1) + ' 時稅後淨利歸零',
           '售價的安全邊際。低於 10% 代表幾乎沒有容錯空間。'),
-        costRisePct: TD.V('m8.beCostRise', beCost, 'low', SRC,
+        costRisePct: TD.V('m8.beCostRise', beCost, 'mid', SRC,
           beCost === null ? '無解'
             : '出價上限下，營建成本上漲 ' + fpct(beCost, 1) + ' 時稅後淨利歸零',
           '營建成本的安全邊際。發包時點與物價指數是主要風險來源。'),
-        rateRisePct: TD.V('m8.beRateRise', beRate, 'low', SRC,
+        rateRisePct: TD.V('m8.beRateRise', beRate, 'mid', SRC,
           beRate === null ? '無解'
             : '出價上限下，土建融利率同時上升 ' + fn(beRate * 100, 2) + ' 個百分點時稅後淨利歸零',
           '單位是「個百分點」的小數（0.03 ＝ 3 個百分點）。利率風險通常小於售價風險，'
@@ -829,11 +840,12 @@ window.TD = window.TD || {};
 
       stress: stress,
 
-      walkAway: TD.V('m8.walkAway', walkAway, 'low', SRC,
-        '走人價 = ' + (walkFrom || '無法計算'),
-        '出價高於此數，代表已把 ' + fpct(WALK_IRR_ADD, 0) + ' 的報酬緩衝讓給賣方，'
-        + '後面任何一項假設走反都沒有餘裕吸收。加 ' + fpct(WALK_IRR_ADD, 0)
-        + ' 是本系統自訂值，不是法規也不是業界標準，請依自己的資金成本改 p.m8.targetIrr 後重算。'),
+      walkAway: null,
+      bidTarget: TD.V('m8.bidTarget', bidTarget, 'mid', SRC,
+        '建議出價 = ' + (bidFrom || '無法計算'),
+        '談判時的出價目標：比走人價（出價上限）低，IRR 與淨利率各保留 3 個百分點緩衝吸收假設誤差。'),
+      bidTargetPerPing: (bidTarget !== null && sitePing > 0) ? bidTarget / sitePing : null,
+      benchmark: benchmark,
 
       notes: notes,
 
@@ -859,9 +871,10 @@ window.TD = window.TD || {};
       },
       capClamped: capClamped,
       stressRule: STRESS_RULE,
-      walkAwayFrom: walkFrom,
-      walkAwayIrrTarget: walkIrrTarget,
-      walkAwayStatus: walkStatus,
+      bidFrom: bidFrom,
+      bidIrrTarget: bidIrrTarget,
+      bidMarginTarget: bidMarginTarget,
+      bidStatus: bidStatus,
       atCap: {
         landPrice: capForFlow, revenue: atCap.revenue, pretax: atCap.pretax,
         profitTax: atCap.profitTax, profit: atCap.profit, interestTotal: atCap.interestTotal,

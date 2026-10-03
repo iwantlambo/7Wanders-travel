@@ -119,14 +119,14 @@ window.TD = window.TD || {};
     'm5.sellablePing': '可售坪', 'm5.mainPing': '主建物坪', 'm5.publicRatio': '公設比',
     'm5.unitsCount': '戶數', 'm5.stalls': '車位數',
     'm5.floorsAbove': '地上層數', 'm5.volFloors': '計入容積層數', 'm5.heightM': '建築高度',
-    'm6.unitPricePing': '成屋成交單價', 'm6.loPing': '單價區間下限', 'm6.hiPing': '單價區間上限',
-    'm6.presalePricePing': '預售單價', 'm6.salesRevenue': '房屋銷售收入',
+    'm6.unitPricePing': '採用銷售單價（不含車位）', 'm6.loPing': '單價區間下限', 'm6.hiPing': '單價區間上限',
+    'm6.presalePricePing': '預售單價', 'm6.salesRevenue': '房地銷售收入（不含車位）',
     'm6.parkingRevenue': '車位收入', 'm6.totalSales': '總銷金額', 'm6.absorbMonths': '去化月數',
     'm7.constructionCost': '營建成本', 'm7.softCost': '軟成本（管銷廣告設計）',
     'm7.financeCost': '融資利息', 'm7.taxCost': '稅費', 'm7.totalCostExLand': '總成本（不含土地）',
-    'm8.landCap': '土地出價上限', 'm8.landCapPerPing': '每坪土地單價',
+    'm8.landCap': '土地出價上限（走人價）', 'm8.landCapPerPing': '出價上限每坪土地單價',
     'm8.irrAtCap': '達成年化 IRR', 'm8.marginAtCap': '達成稅後淨利率',
-    'm8.profitAtCap': '稅後淨利', 'm8.walkAway': '走人價',
+    'm8.profitAtCap': '稅後淨利', 'm8.walkAway': '走人價', 'm8.bidTarget': '建議出價',
     'm8.bePriceDrop': '售價可跌幅度（損益兩平）',
     'm8.beCostRise': '營建成本可漲幅度（損益兩平）',
     'm8.beRateRise': '利率可升幅度（損益兩平）',
@@ -141,7 +141,7 @@ window.TD = window.TD || {};
     'm4.regime': '更新或危老制度',
     'm4.tdrPct': '容積移轉成數',
     'm6.comps': '比價案例',
-    'm6.useSampleComps': '使用示範比價資料',
+    'm6.compSource': '比價資料來源',
     'm7.constructionType': '營建類型',
     'm8.targetIrr': '目標年化 IRR',
     'm8.targetMargin': '目標稅後淨利率'
@@ -381,33 +381,51 @@ window.TD = window.TD || {};
   function noteText(kind, text) { return note(kind, zhEsc(text)); }
 
   /* 出價上限大數字區。
-     opts:{ perPing, walkAway, irr, margin, binding, p } */
+     opts:{ perPing, bid, bidPerPing, benchmark, sitePing, irr, margin, binding, p, missing } */
+  function wanStr(v) { return isNum(v) ? TD.fmt.n(v / 1e4, 1) + ' 萬' : '—'; }
+
   function hero(v, opts) {
     opts = opts || {};
     var raw = TD.isV(v) ? v.v : v;
-    var h;
+    var h, i;
     if (!isNum(raw)) {
-      h = '<div class="hero blank"><div class="k">土地出價上限</div>';
+      h = '<div class="hero blank"><div class="k">土地出價上限（走人價）</div>';
       h += '<span class="v">尚無法計算</span>';
       if (isArr(opts.missing) && opts.missing.length) {
         h += '<ul>';
-        var i;
         for (i = 0; i < opts.missing.length; i++) h += '<li>' + zhEsc(opts.missing[i]) + '</li>';
         h += '</ul>';
       }
       h += '</div>';
       return h;
     }
-    h = '<div class="hero"><div class="k">土地出價上限</div>';
-    h += '<span class="v">' + formatRaw(raw, { fmt: 'money' })
-       + (TD.isV(v) ? badgeHtml(v.conf) : '') + '</span>';
-    if (opts.binding) h += '<span class="bind">' + esc(opts.binding) + '</span>';
+    var bm = isObj(opts.benchmark) ? opts.benchmark : null;
+    var per = TD.isV(opts.perPing) ? opts.perPing.v : opts.perPing;
+    h = '<div class="hero"><div class="k">土地出價上限（走人價）'
+      + (isNum(opts.sitePing) ? '<span class="legal">　基地 ' + esc(TD.fmt.n(opts.sitePing, 2)) + ' 坪</span>' : '') + '</div>';
+    h += '<span class="v">' + formatRaw(raw, { fmt: 'money' }) + (TD.isV(v) ? badgeHtml(v.conf) : '') + '</span>';
+    h += '<span class="bind">每坪 ' + esc(wanStr(per)) + (opts.binding ? '　' + esc(opts.binding) : '') + '</span>';
     h += '<div class="row">';
-    h += '<div><b>每坪土地單價</b>' + num(opts.perPing, { fmt: 'unitPrice', p: opts.p }) + '</div>';
-    h += '<div><b>走人價</b>' + num(opts.walkAway, { fmt: 'money', p: opts.p }) + '</div>';
-    h += '<div><b>達成年化 IRR</b>' + num(opts.irr, { fmt: 'pct', d: 2, p: opts.p }) + '</div>';
+    h += '<div><b>建議出價（談判目標）</b>' + num(opts.bid, { fmt: 'money', p: opts.p })
+       + '<span class="legal">每坪 ' + esc(wanStr(opts.bidPerPing)) + '</span></div>';
+    if (bm) {
+      h += '<div><b>本區同分區土地行情</b><span class="num plain">每坪 ' + esc(wanStr(bm.perPing)) + '</span>'
+         + '<span class="legal">' + (isNum(bm.capVsMarket) ? '上限為行情的 ' + esc(TD.fmt.n(bm.capVsMarket * 100, 0)) + '%' : '')
+         + '</span></div>';
+    } else {
+      h += '<div><b>本區同分區土地行情</b><span class="num plain">—</span><span class="legal">查無同分區土地成交</span></div>';
+    }
+    h += '<div><b>達成年化 IRR</b>' + num(opts.irr, { fmt: 'pct', d: 1, p: opts.p }) + '</div>';
     h += '<div><b>達成稅後淨利率</b>' + num(opts.margin, { fmt: 'pct', d: 1, p: opts.p }) + '</div>';
-    h += '</div></div>';
+    h += '</div>';
+    if (bm && bm.verdict) {
+      var cls = (isNum(bm.capVsMarket) && bm.capVsMarket < 0.95 && bm.conf !== 'low') ? 'warn' : 'info';
+      h += '<div class="note ' + cls + '">' + zhEsc(bm.verdict)
+         + (isNum(bm.marginAtMarket) ? '。以行情價買入：稅後淨利率 ' + esc(TD.fmt.pct(bm.marginAtMarket, 1))
+            + (isNum(bm.irrAtMarket) ? '、年化 IRR ' + esc(TD.fmt.pct(bm.irrAtMarket, 1)) : '') : '') + '。</div>';
+    }
+    h += '<p class="legal">走人價＝賣方開價超過就放棄的最高地價（剛好達到報酬目標）；建議出價＝再保留 3 個百分點報酬緩衝的出價目標。</p>';
+    h += '</div>';
     return h;
   }
 
@@ -659,24 +677,31 @@ window.TD = window.TD || {};
      7. scatter：比價案例散佈圖（單價 對 屋齡）
      ------------------------------------------------------------------ */
 
-  function scatter(comps, subjectPrice) {
+  /* 散佈圖：y 為單價；x 預設屋齡，opts.x(c) 可改用其他特徵（例如成交年月），opts.xLabel／opts.xTick 對應標示 */
+  function scatter(comps, subjectPrice, opts) {
+    opts = opts || {};
+    var xOf = typeof opts.x === 'function' ? opts.x : function (c) { return c.ageYears; };
+    var xTick = typeof opts.xTick === 'function' ? opts.xTick : function (v) { return TD.fmt.n(v, 0); };
+    var xLabel = opts.xLabel || '屋齡（年）';
     comps = isArr(comps) ? comps : [];
-    var pts = [], i, c;
+    var pts = [], i, c, xv;
     for (i = 0; i < comps.length; i++) {
       c = comps[i];
-      if (!isObj(c) || !isNum(c.unitPricePing) || !isNum(c.ageYears)) continue;
-      pts.push(c);
+      if (!isObj(c) || !isNum(c.unitPricePing)) continue;
+      xv = xOf(c);
+      if (!isNum(xv)) continue;
+      pts.push({ x: xv, y: c.unitPricePing });
     }
     if (pts.length < 2) return '<p class="legal">可用案例少於兩筆，無法畫散佈圖。</p>';
 
     var W = 740, H = 240, L = 62, R = 14, T = 14, B = 30;
     var PW = W - L - R, PH = H - T - B;
-    var xLo = pts[0].ageYears, xHi = pts[0].ageYears, yLo = pts[0].unitPricePing, yHi = pts[0].unitPricePing;
+    var xLo = pts[0].x, xHi = pts[0].x, yLo = pts[0].y, yHi = pts[0].y;
     for (i = 1; i < pts.length; i++) {
-      if (pts[i].ageYears < xLo) xLo = pts[i].ageYears;
-      if (pts[i].ageYears > xHi) xHi = pts[i].ageYears;
-      if (pts[i].unitPricePing < yLo) yLo = pts[i].unitPricePing;
-      if (pts[i].unitPricePing > yHi) yHi = pts[i].unitPricePing;
+      if (pts[i].x < xLo) xLo = pts[i].x;
+      if (pts[i].x > xHi) xHi = pts[i].x;
+      if (pts[i].y < yLo) yLo = pts[i].y;
+      if (pts[i].y > yHi) yHi = pts[i].y;
     }
     if (isNum(subjectPrice)) {
       if (subjectPrice < yLo) yLo = subjectPrice;
@@ -691,7 +716,7 @@ window.TD = window.TD || {};
     function Y(v) { return T + (yHi - v) / (yHi - yLo) * PH; }
 
     var s = '<svg class="chart" viewBox="0 0 ' + W + ' ' + H + '" role="img" '
-          + 'aria-label="比較案例單價對屋齡的散佈圖">';
+          + 'aria-label="比較案例單價散佈圖（橫軸：' + esc(xLabel) + '）">';
     var t, v, yy;
     for (t = 0; t <= 4; t++) {
       v = yLo + (yHi - yLo) * t / 4;
@@ -702,21 +727,21 @@ window.TD = window.TD || {};
     }
     s += '<text x="' + (L - 6) + '" y="' + (T - 2) + '" text-anchor="end">萬/坪</text>';
     s += '<line class="ax" x1="' + L + '" y1="' + (T + PH) + '" x2="' + (L + PW) + '" y2="' + (T + PH) + '"></line>';
-    s += '<text x="' + (L + PW) + '" y="' + (T + PH + 24) + '" text-anchor="end">屋齡（年）</text>';
+    s += '<text x="' + (L + PW) + '" y="' + (T + PH + 24) + '" text-anchor="end">' + esc(xLabel) + '</text>';
     var xs, step = Math.max(1, Math.ceil((xHi - xLo) / 6));
     for (xs = Math.ceil(xLo); xs <= xHi; xs += step) {
       s += '<text x="' + TD.fmt.n(X(xs), 1) + '" y="' + (T + PH + 15) + '" text-anchor="middle">'
-         + esc(TD.fmt.n(xs, 0)) + '</text>';
+         + esc(xTick(xs)) + '</text>';
     }
     if (isNum(subjectPrice)) {
       s += '<line class="ax" x1="' + L + '" y1="' + TD.fmt.n(Y(subjectPrice), 1) + '" x2="' + (L + PW)
          + '" y2="' + TD.fmt.n(Y(subjectPrice), 1) + '" stroke-dasharray="4 3"></line>';
-      s += '<text class="lbl" x="' + (L + 4) + '" y="' + TD.fmt.n(Y(subjectPrice) - 5, 1) + '">本案推估 '
+      s += '<text class="lbl" x="' + (L + 4) + '" y="' + TD.fmt.n(Y(subjectPrice) - 5, 1) + '">本案採用 '
          + esc(TD.fmt.n(subjectPrice / 1e4, 1)) + ' 萬/坪</text>';
     }
     for (i = 0; i < pts.length; i++) {
-      s += '<circle class="dot-pos" cx="' + TD.fmt.n(X(pts[i].ageYears), 1) + '" cy="'
-         + TD.fmt.n(Y(pts[i].unitPricePing), 1) + '" r="3.5" opacity=".75"></circle>';
+      s += '<circle class="dot-pos" cx="' + TD.fmt.n(X(pts[i].x), 1) + '" cy="'
+         + TD.fmt.n(Y(pts[i].y), 1) + '" r="3.5" opacity=".75"></circle>';
     }
     s += '</svg>';
     return s;
@@ -792,9 +817,9 @@ window.TD = window.TD || {};
     'm3.far': { kind: 'field', path: 'm3.overrides.far', label: '容積率覆寫（%）',
       type: 'pct', min: 0, max: 2000, step: '1', where: '進階假設',
       hint: '以百分比填（560% 填 560）。留白＝沿用種子資料。' },
-    'm6.unitPricePing': { kind: 'field', path: 'm6.manualUnitPricePing', label: '人工指定成屋單價（元/坪）',
+    'm6.unitPricePing': { kind: 'field', path: 'm6.manualUnitPricePing', label: '指定銷售單價（元/坪，不含車位）',
       type: 'num', min: 0, step: '1000', where: '進階假設 → 售價',
-      hint: '填了就走人工指定、信心標「輸入」。留白＝回到比價模型。' },
+      hint: '填了就採用指定單價、信心標「輸入」。留白＝回到本區實價登錄。' },
     'm3.buildAreaM2': { kind: 'redirect', path: 'm3.overrides.bcr', where: '進階假設',
       label: '建蔽率覆寫（%）', why: '建築面積是基地面積 × 建蔽率的結果，不是可獨立設定的輸入。' },
     'm3.baseFloorM2': { kind: 'redirect', path: 'm3.overrides.far', where: '進階假設',
@@ -814,7 +839,7 @@ window.TD = window.TD || {};
   function guessFmt(key) {
     var k = String(key || '');
     if (/PerPing|unitPrice|PricePing/i.test(k)) return 'unitPrice';
-    if (/Cap$|Cost|Sales|Revenue|profit|landCap|walkAway/i.test(k)) return 'money';
+    if (/Cap$|Cost|Sales|Revenue|profit|landCap|walkAway|bidTarget/i.test(k)) return 'money';
     /* 樣式刻意全小寫（正規表示式帶 i 旗標）：原始碼裡不留任何看起來像模組代號的字樣 */
     if (/m2$|ping$/i.test(k)) return 'n';
     if (/pct|Ratio|rate|irr|margin|Threshold|Drop|Rise/i.test(k)) return 'pct';

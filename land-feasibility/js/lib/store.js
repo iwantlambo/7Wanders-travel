@@ -5,7 +5,7 @@ window.TD = window.TD || {};
 
   var K_PROJECTS = 'tdev.v1.projects';   // localStorage：專案陣列
   var K_CURRENT  = 'tdev.v1.current';    // localStorage：目前專案 id
-  var SCHEMA = 1;                        // 目前 project 結構版本
+  var SCHEMA = 2;                        // 目前 project 結構版本（2：2026-10 版，新增產品類型、實價登錄比價等欄位）
   var AUDIT_MAX = 500;                   // audit 只留最近 N 筆，避免儲存空間爆掉
   var BAD_KEYS = ['__proto__', 'constructor', 'prototype'];  // 匯入資料一律擋掉的鍵名
 
@@ -194,26 +194,30 @@ window.TD = window.TD || {};
       id: newId(), name: '', createdAt: t, updatedAt: t, schema: SCHEMA,
       units: 'ping',
       parcel: {
-        city: '臺北市', district: '', section: '',
+        city: '新北市', district: '', section: '',
         numbers: [{ no: '', areaM2: 0, share: '1/1' }],
-        zone: '商三', roadWidth: 0, roadCount: 1, corner: false, siteWidth: 0, siteDepth: 0,
-        ownerCount: 1, shareDenomMax: 1, buildingAgeYears: 0, existingFloorM2: 0,
+        zone: '住宅區', productType: 'auto',
+        roadWidth: null, roadCount: 1, corner: false, frontageM: null, siteWidth: null, siteDepth: null,
+        northZone: 'same', mrtDistanceM: null,
+        ownerCount: 1, shareDenomMax: 1, buildingAgeYears: 0, existingFloorM2: 0, hrStatus: 'auto',
         deedText: '', notes: ''
       },
       m2: { manualFlags: {}, consent: { owners: 0, agreeOwners: 0, shareAgree: 0 }, resolvedNotes: '' },
-      m3: { overrides: { bcr: null, far: null }, manualChecks: {} },
-      m4: { regime: 'HR', picked: ['GREEN', 'SEISMIC'], pctOverrides: {}, tdrPct: 0 },
+      m3: { overrides: { bcr: null, far: null }, manualChecks: {}, setbackFrontM: null },
+      /* regime 'AUTO'：自動採用淨效益最高的可行組合；使用者點選排行或勾選項目後改為指定制度 */
+      m4: { regime: 'AUTO', picked: [], pctOverrides: {}, tdrPct: null },
+      /* m5 欄位為 null 代表「依產品類型自動帶入」，不是 0 */
       m5: {
-        exemptRatio: 0.30, sellRatio: 0.95, publicRatio: 0.33, avgUnitPing: 35,
-        basementPerStallM2: 40, floorHeightM: 3.2
+        exemptRatio: null, sellRatio: null, publicRatio: null, avgUnitPing: null,
+        basementPerStallM2: 40, floorHeightM: null
       },
       m6: {
-        comps: [], useSampleComps: true,
-        subject: { ageYears: 0, floor: 8, areaPing: 35, distanceM: 0 },
-        presalePremium: 0.08, absorbPerMonth: 8, manualUnitPricePing: null
+        comps: [], compSource: 'district',
+        subject: { ageYears: 0, floor: null, areaPing: null, distanceM: 0 },
+        presalePremium: null, absorbPerMonth: null, manualUnitPricePing: null, parkingPricePerStall: null
       },
       m7: {
-        constructionKey: 'rc25', constructionPerPingOverride: null,
+        constructionKey: 'auto', constructionPerPingOverride: null,
         landLTV: null, landRate: null, constLTV: null, constRate: null,
         sgaRate: null, marketingRate: null, designRate: null, taxRateOther: null, profitTaxRate: null,
         planMonths: null, buildMonths: null, handoverMonths: null, presaleStartMonth: null
@@ -253,7 +257,8 @@ window.TD = window.TD || {};
         unitPricePing: takeNum(r, 'unitPricePing', 0), areaPing: takeNum(r, 'areaPing', 0),
         ageYears: takeNum(r, 'ageYears', 0), floor: takeNum(r, 'floor', 0),
         totalFloors: takeNum(r, 'totalFloors', 0), distanceM: takeNum(r, 'distanceM', 0),
-        year: takeNum(r, 'year', 0), type: takeStr(r, 'type', '')
+        year: takeNum(r, 'year', 0), type: takeStr(r, 'type', ''),
+        ym: takeNum(r, 'ym', 0), project: takeStr(r, 'project', ''), presale: takeBool(r, 'presale', false)
       });
     }
     if (out.length !== (isArr(rows) ? rows.length : 0)) warn.push('m6.comps 有非物件的項目已被略過');
@@ -309,20 +314,30 @@ window.TD = window.TD || {};
     if (['ping', 'm2'].indexOf(p.units) < 0) p.units = 'ping';
 
     var s = isObj(src.parcel) ? src.parcel : {};
-    p.parcel.city = takeStr(s, 'city', '臺北市');
+    p.parcel.city = takeStr(s, 'city', '新北市');
     p.parcel.district = takeStr(s, 'district', '');
     p.parcel.section = takeStr(s, 'section', '');
     p.parcel.numbers = adoptNumbers(s, warn);
-    p.parcel.zone = takeStr(s, 'zone', '商三');
-    p.parcel.roadWidth = takeNum(s, 'roadWidth', 0);
+    p.parcel.zone = takeStr(s, 'zone', '住宅區');
+    p.parcel.productType = takeStr(s, 'productType', 'auto');
+    p.parcel.roadWidth = takeNumOrNull(s, 'roadWidth');
+    if (p.parcel.roadWidth === 0) p.parcel.roadWidth = null;
     p.parcel.roadCount = takeNum(s, 'roadCount', 1);
     p.parcel.corner = takeBool(s, 'corner', false);
-    p.parcel.siteWidth = takeNum(s, 'siteWidth', 0);
-    p.parcel.siteDepth = takeNum(s, 'siteDepth', 0);
+    p.parcel.frontageM = takeNumOrNull(s, 'frontageM');
+    if (p.parcel.frontageM === 0) p.parcel.frontageM = null;
+    p.parcel.siteWidth = takeNumOrNull(s, 'siteWidth');
+    if (p.parcel.siteWidth === 0) p.parcel.siteWidth = null;
+    p.parcel.siteDepth = takeNumOrNull(s, 'siteDepth');
+    if (p.parcel.siteDepth === 0) p.parcel.siteDepth = null;
+    p.parcel.northZone = takeStr(s, 'northZone', 'same');
+    p.parcel.mrtDistanceM = takeNumOrNull(s, 'mrtDistanceM');
+    if (p.parcel.mrtDistanceM === 0) p.parcel.mrtDistanceM = null;
     p.parcel.ownerCount = takeNum(s, 'ownerCount', 1);
     p.parcel.shareDenomMax = takeNum(s, 'shareDenomMax', 1);
     p.parcel.buildingAgeYears = takeNum(s, 'buildingAgeYears', 0);
     p.parcel.existingFloorM2 = takeNum(s, 'existingFloorM2', 0);
+    p.parcel.hrStatus = takeStr(s, 'hrStatus', 'auto');
     p.parcel.deedText = takeStr(s, 'deedText', '');
     p.parcel.notes = takeStr(s, 'notes', '');
 
@@ -340,35 +355,39 @@ window.TD = window.TD || {};
     var ov = isObj(s.overrides) ? s.overrides : {};
     p.m3.overrides = { bcr: takeNumOrNull(ov, 'bcr'), far: takeNumOrNull(ov, 'far') };
     p.m3.manualChecks = takeMap(s, 'manualChecks');
+    p.m3.setbackFrontM = takeNumOrNull(s, 'setbackFrontM');
 
     s = isObj(src.m4) ? src.m4 : {};
-    p.m4.regime = takeStr(s, 'regime', 'HR');
-    p.m4.picked = takeStrArr(s, 'picked', ['GREEN', 'SEISMIC']);
+    p.m4.regime = takeStr(s, 'regime', 'AUTO');
+    p.m4.picked = takeStrArr(s, 'picked', []);
     p.m4.pctOverrides = takeNumMap(s, 'pctOverrides');
-    p.m4.tdrPct = takeNum(s, 'tdrPct', 0);
+    p.m4.tdrPct = takeNumOrNull(s, 'tdrPct');
+    if (p.m4.tdrPct === 0) p.m4.tdrPct = null;
 
     s = isObj(src.m5) ? src.m5 : {};
-    p.m5.exemptRatio = takeNum(s, 'exemptRatio', 0.30);
-    p.m5.sellRatio = takeNum(s, 'sellRatio', 0.95);
-    p.m5.publicRatio = takeNum(s, 'publicRatio', 0.33);
-    p.m5.avgUnitPing = takeNum(s, 'avgUnitPing', 35);
+    p.m5.exemptRatio = takeNumOrNull(s, 'exemptRatio');
+    p.m5.sellRatio = takeNumOrNull(s, 'sellRatio');
+    p.m5.publicRatio = takeNumOrNull(s, 'publicRatio');
+    p.m5.avgUnitPing = takeNumOrNull(s, 'avgUnitPing');
     p.m5.basementPerStallM2 = takeNum(s, 'basementPerStallM2', 40);
-    p.m5.floorHeightM = takeNum(s, 'floorHeightM', 3.2);
+    p.m5.floorHeightM = takeNumOrNull(s, 'floorHeightM');
 
     s = isObj(src.m6) ? src.m6 : {};
     p.m6.comps = adoptComps(s, warn);
-    p.m6.useSampleComps = takeBool(s, 'useSampleComps', true);
+    p.m6.compSource = takeStr(s, 'compSource', 'district');
+    if (['district', 'custom'].indexOf(p.m6.compSource) < 0) p.m6.compSource = 'district';
     var sub = isObj(s.subject) ? s.subject : {};
     p.m6.subject = {
-      ageYears: takeNum(sub, 'ageYears', 0), floor: takeNum(sub, 'floor', 8),
-      areaPing: takeNum(sub, 'areaPing', 35), distanceM: takeNum(sub, 'distanceM', 0)
+      ageYears: takeNum(sub, 'ageYears', 0), floor: takeNumOrNull(sub, 'floor'),
+      areaPing: takeNumOrNull(sub, 'areaPing'), distanceM: takeNum(sub, 'distanceM', 0)
     };
-    p.m6.presalePremium = takeNum(s, 'presalePremium', 0.08);
-    p.m6.absorbPerMonth = takeNum(s, 'absorbPerMonth', 8);
+    p.m6.presalePremium = takeNumOrNull(s, 'presalePremium');
+    p.m6.absorbPerMonth = takeNumOrNull(s, 'absorbPerMonth');
     p.m6.manualUnitPricePing = takeNumOrNull(s, 'manualUnitPricePing');
+    p.m6.parkingPricePerStall = takeNumOrNull(s, 'parkingPricePerStall');
 
     s = isObj(src.m7) ? src.m7 : {};
-    p.m7.constructionKey = takeStr(s, 'constructionKey', 'rc25');
+    p.m7.constructionKey = takeStr(s, 'constructionKey', 'auto');
     p.m7.constructionPerPingOverride = takeNumOrNull(s, 'constructionPerPingOverride');
     var m7nulls = ['landLTV', 'landRate', 'constLTV', 'constRate', 'sgaRate', 'marketingRate',
                    'designRate', 'taxRateOther', 'profitTaxRate', 'planMonths', 'buildMonths',
@@ -385,8 +404,39 @@ window.TD = window.TD || {};
     p.overrides = takeNumMap(src, 'overrides');
     p.audit = adoptAudit(src);
 
+    if (sch !== null && sch < 2) migrateV1(src, p, warn);
     return p;
   }
+
+  /* ---- 第 1 版 → 第 2 版 ----
+     第 1 版的幾個「預設值」本身就是錯誤數字的來源，舊專案帶著它們進新版會繼續算錯：
+       m4 預設危老（綠建築＋耐震 12%），不管基地有沒有符合危老的建物；
+       m6 預售溢價 8% 疊在成屋單價上，新版改用實價登錄的預售單價，再加 8% 就重複計算；
+       m7 營建級距固定 rc25（17 萬元／坪），新版依產品與層數自動選 2026 年行情；
+       m5、m6 的量體與去化參數是住宅的固定值，新版依產品類型自動帶入。
+     只有「仍等於舊預設值」的欄位才換掉；使用者自己改過的值一律保留。*/
+  function migrateV1(src, p, warn) {
+    var s4 = isObj(src.m4) ? src.m4 : {}, s5 = isObj(src.m5) ? src.m5 : {}, s6 = isObj(src.m6) ? src.m6 : {};
+    var s7 = isObj(src.m7) ? src.m7 : {}, changed = [];
+    var picked = isArr(s4.picked) ? s4.picked.slice().sort().join(',') : '';
+    if ((s4.regime === 'HR' || s4.regime === undefined) && (picked === 'GREEN,SEISMIC' || picked === '')) {
+      p.m4.regime = 'AUTO'; p.m4.picked = []; changed.push('容積獎勵改為自動採用可行的最佳組合');
+    }
+    if (s6.presalePremium === 0.08 || s6.presalePremium === undefined) { p.m6.presalePremium = null; changed.push('預售溢價改為自動（預售樣本 0%）'); }
+    if (s6.absorbPerMonth === 8 || s6.absorbPerMonth === undefined) p.m6.absorbPerMonth = null;
+    if (isObj(s6.subject)) {
+      if (s6.subject.floor === 8) p.m6.subject.floor = null;
+      if (s6.subject.areaPing === 35) p.m6.subject.areaPing = null;
+    }
+    if (s6.useSampleComps === false && isArr(s6.comps) && s6.comps.length) p.m6.compSource = 'custom';
+    else p.m6.compSource = 'district';
+    if (['rc12', 'rc25', 'src25up', undefined].indexOf(s7.constructionKey) >= 0) { p.m7.constructionKey = 'auto'; changed.push('營建單價改為依產品與層數自動選 2026 年行情'); }
+    var olds = { exemptRatio: 0.30, sellRatio: 0.95, publicRatio: 0.33, avgUnitPing: 35, floorHeightM: 3.2 }, k;
+    for (k in olds) { if (hasOwnKey(olds, k) && (s5[k] === olds[k] || s5[k] === undefined)) p.m5[k] = null; }
+    if (changed.length) warn.push('已依新版調整舊預設值：' + changed.join('；') + '。');
+  }
+
+  function hasOwnKey(o, k) { return Object.prototype.hasOwnProperty.call(o, k); }
 
   /* ===================== 點號路徑存取 ===================== */
 
@@ -722,7 +772,8 @@ window.TD = window.TD || {};
   }
 
   /* 示範專案：臺北市大安區、商三、660 平方公尺（兩筆地號）、臨 12 米路、角地、
-     既有建物屋齡 42 年、所有權人 6 人、最大持分分母 48。基地 22m × 30m。*/
+     既有建物屋齡 42 年、所有權人 6 人、最大持分分母 48。基地 22m × 30m。
+     售價以大安區實價登錄預售屋行情推估，營建與融資用 2026 年行情。*/
   function sample(at) {
     var p = defaults();
     var t = now(at);
@@ -755,16 +806,14 @@ window.TD = window.TD || {};
     p.m2.consent = { owners: 6, agreeOwners: 4, shareAgree: 0.62 };
     p.m2.resolvedNotes = '公同共有與海外共有人尚未處理，示範用途請勿視為已排除。';
 
-    p.m4.regime = 'HR';                                  // 基地 660 ㎡ 未達都更 1000 ㎡ 門檻，屋齡 42 年符合危老
-    p.m4.picked = ['GREEN', 'SEISMIC', 'TIME'];
-    p.m4.tdrPct = 0;
+    p.m4.regime = 'AUTO';                                // 自動採用可行的最佳組合（屋齡 42 年，危老可行）
+    p.m4.picked = [];
+    p.m4.tdrPct = null;
 
-    p.m6.useSampleComps = true;
-    p.m6.subject = { ageYears: 0, floor: 10, areaPing: 38, distanceM: 0 };
-    p.m6.presalePremium = 0.08;
-    p.m6.absorbPerMonth = 8;
+    p.m6.compSource = 'district';                        // 臺北市大安區實價登錄（預售屋）
+    p.m6.subject = { ageYears: 0, floor: null, areaPing: null, distanceM: 0 };
 
-    p.m7.constructionKey = 'rc25';
+    p.m7.constructionKey = 'auto';
     p.m8.targetIrr = 0.15;
     p.m8.targetMargin = 0.15;
     p.m8.scenario = 'base';
