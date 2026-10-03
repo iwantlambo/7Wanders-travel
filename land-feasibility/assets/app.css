@@ -1,0 +1,226 @@
+/* 土地開發可行性評估 — 介面樣式（UI-V2 第 5 節）
+   白底淺色、單一頁面、左輸入右結果。不做深色模式、不做主題切換。
+   設計原則：資訊密度高、每個數字可追溯、列印友善、不放裝飾。*/
+
+:root{
+  --bg:#f7f8f8; --panel:#ffffff; --ink:#111827; --ink-2:#4b5563; --ink-3:#9ca3af;
+  --line:#e5e7eb; --line-2:#d1d5db;
+  --accent:#0f766e; --accent-soft:#ecfdf5; --accent-ink:#0b5a54;
+  --red:#b42318; --red-soft:#fef3f2;
+  --amber:#b54708; --amber-soft:#fffaeb;
+  --green:#067647; --green-soft:#ecfdf3;
+  --violet:#5925dc; --violet-soft:#f4f3ff;
+  --radius:8px;
+  --mono:"SFMono-Regular",Consolas,"Liberation Mono",Menlo,monospace;
+  --sans:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans TC","PingFang TC","Microsoft JhengHei",sans-serif;
+}
+
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:14px;line-height:1.5;-webkit-font-smoothing:antialiased}
+button,input,select,textarea{font-family:inherit;font-size:inherit;color:inherit}
+a{color:var(--accent-ink)}
+h1,h2,h3{margin:0;font-weight:600}
+
+/* ---------------------------------------------------------------- 頂列 */
+.topbar{display:flex;align-items:center;gap:10px;height:48px;padding:0 16px;background:var(--panel);
+  border-bottom:1px solid var(--line);position:sticky;top:0;z-index:40}
+.brand{font-weight:700;letter-spacing:.01em;white-space:nowrap;font-size:14.5px}
+.topbar-mid{display:flex;align-items:center;gap:8px;margin-left:12px;min-width:0}
+/* 專案名稱可能很長，不夾住寬度會把整條頂列撐出水平捲軸 */
+.topbar-mid select{max-width:min(320px,34vw);min-width:80px}
+.topbar-right{display:flex;align-items:center;gap:8px;margin-left:auto;position:relative}
+@media (max-width:640px){
+  .brand{font-size:12.5px}
+  .topbar{gap:6px;padding:0 10px}
+  .topbar-mid{margin-left:4px}
+}
+
+select,input[type=text],input[type=number],textarea{background:var(--panel);border:1px solid var(--line-2);
+  border-radius:6px;padding:4px 7px;height:30px}
+select:focus,input[type=text]:focus,input[type=number]:focus,textarea:focus{outline:none;border-color:var(--accent)}
+input[type=number]{text-align:right;font-variant-numeric:tabular-nums}
+textarea{width:100%;height:auto;min-height:110px;font-family:var(--mono);font-size:12px;line-height:1.5}
+.btn{border:1px solid var(--line-2);background:var(--panel);border-radius:6px;padding:0 10px;height:30px;
+  cursor:pointer;white-space:nowrap;display:inline-flex;align-items:center;gap:5px}
+.btn:hover{border-color:var(--accent);color:var(--accent-ink)}
+.btn-primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
+.btn-primary:hover{color:#fff;filter:brightness(1.08)}
+.btn-ghost{background:transparent}
+.btn-sm{height:24px;padding:0 7px;font-size:12px}
+.btn.danger,.menu .danger{color:var(--red)}
+.menu{position:absolute;right:0;top:38px;background:var(--panel);border:1px solid var(--line-2);border-radius:8px;
+  padding:4px;min-width:196px;z-index:60}
+.menu button{display:block;width:100%;text-align:left;border:0;background:transparent;padding:6px 9px;
+  border-radius:5px;cursor:pointer;font-size:13px}
+.menu button:hover{background:var(--accent-soft)}
+.menu hr{border:0;border-top:1px solid var(--line);margin:4px 2px}
+
+/* ---------------------------------------------------------------- 版面 */
+.wrap{max-width:1500px;margin:0 auto;padding:12px 16px 24px}
+.cols{display:grid;grid-template-columns:360px minmax(0,1fr);gap:14px;align-items:start}
+.pane-in{position:sticky;top:60px;max-height:calc(100vh - 72px);overflow:auto;
+  display:flex;flex-direction:column;gap:8px}
+.pane-out{display:flex;flex-direction:column;gap:10px;min-width:0}
+/* 界線與 docs/UI-V2.md 第 2 節的區間對齊：>=1100 兩欄 360px、900～1099 兩欄 320px、<900 單欄。
+   這兩段一定要排在 .pane-in 的基礎規則之後：同樣的選擇器、同樣的權重，後面的才蓋得掉，
+   否則單欄堆疊時左欄還留著 sticky 與 max-height，輸入區會變成一個矮的捲動框。*/
+@media (max-width:1099px){.cols{grid-template-columns:320px minmax(0,1fr);gap:12px}}
+@media (max-width:899px){
+  .cols{grid-template-columns:minmax(0,1fr)}
+  .pane-in{position:static;max-height:none;overflow:visible}
+}
+
+/* ---------------------------------------------------------------- 收合區塊 */
+.sec{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden}
+.sec-head{display:flex;align-items:center;gap:8px;width:100%;text-align:left;border:0;background:transparent;
+  padding:7px 10px;cursor:pointer;font:600 13px/1.4 var(--sans);letter-spacing:.02em;color:var(--ink-2)}
+.sec-head:hover{background:var(--bg)}
+.sec-head .caret{color:var(--ink-3);font-size:10px;width:10px;flex:none}
+.sec-head .sub{margin-left:auto;font-weight:400;font-size:11.5px;color:var(--ink-3);
+  font-variant-numeric:tabular-nums}
+.sec-body{padding:8px 10px 10px;border-top:1px solid var(--line)}
+.sec-body>:first-child{margin-top:0}
+.sec.flat{border:0;background:transparent}
+.sec.flat>.sec-head{padding-left:0}
+
+/* ---------------------------------------------------------------- 卡片（抽屜與報告內用） */
+.card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);margin:10px 0;overflow:hidden}
+.card>header{display:flex;align-items:center;gap:8px;padding:6px 10px;border-bottom:1px solid var(--line)}
+.card>header h3{font-size:13px;color:var(--ink-2);letter-spacing:.02em}
+.card .body{padding:8px 10px}
+.card .body.tight{padding:6px 10px 8px}
+
+/* ---------------------------------------------------------------- 出價上限大數字 */
+.hero{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:14px 16px}
+.hero .k{font-size:11.5px;letter-spacing:.06em;color:var(--ink-3)}
+.hero .v{font:700 clamp(34px,4vw,52px)/1.05 var(--sans);letter-spacing:-.03em;color:var(--accent-ink);
+  font-variant-numeric:tabular-nums;margin:2px 0 4px;display:block}
+.hero .v .badge{vertical-align:middle;margin-left:8px}
+.hero .bind{display:inline-block;font-size:11.5px;color:var(--accent-ink);background:var(--accent-soft);
+  border-radius:4px;padding:1px 7px}
+.hero .row{display:flex;flex-wrap:wrap;gap:0 22px;margin-top:8px}
+.hero .row>div{font-size:12.5px;color:var(--ink-2)}
+.hero .row b{display:block;font-size:10.5px;font-weight:400;letter-spacing:.05em;color:var(--ink-3)}
+.hero.blank .v{font-size:26px;color:var(--ink-2);letter-spacing:-.01em}
+.hero ul{margin:6px 0 0;padding-left:18px;font-size:12.5px;color:var(--ink-2)}
+.hero ul li{margin:1px 0}
+
+/* ---------------------------------------------------------------- 兩欄密集表 */
+.kv{display:grid;grid-template-columns:auto 1fr;gap:0;font-size:13px}
+.kv>dt,.kv>dd{padding:5px 8px;border-bottom:1px solid var(--line);margin:0;min-width:0}
+.kv>dt{color:var(--ink-2);font-size:12px;white-space:nowrap}
+.kv>dd{text-align:right;font-variant-numeric:tabular-nums}
+.kv>dt:nth-last-of-type(1),.kv>dd:nth-last-of-type(1){border-bottom:0}
+.kv.two{grid-template-columns:auto 1fr auto 1fr}
+@media (max-width:760px){.kv.two{grid-template-columns:auto 1fr}}
+
+/* ---------------------------------------------------------------- 輸入列 */
+.fieldrow{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px 8px;margin:0 0 8px}
+.fieldrow.one{grid-template-columns:minmax(0,1fr)}
+.fieldrow.three{grid-template-columns:repeat(3,minmax(0,1fr))}
+.fieldrow:last-child{margin-bottom:0}
+.field{display:flex;flex-direction:column;gap:2px;min-width:0}
+.field>label,.field-label{font-size:11px;color:var(--ink-2);display:flex;align-items:center;gap:4px}
+.field input,.field select,.field textarea{width:100%}
+.field .hint{font-size:10.5px;color:var(--ink-3)}
+.inline{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.checkline{display:flex;align-items:center;gap:6px;padding:3px 0;font-size:12.5px}
+.checkline input{accent-color:var(--accent)}
+.grp{margin:0 0 10px}
+.grp:last-child{margin-bottom:0}
+.grp>h3{font-size:11px;letter-spacing:.08em;color:var(--ink-3);margin:0 0 4px}
+
+/* ---------------------------------------------------------------- 數字與信心徽章 */
+.num{font-variant-numeric:tabular-nums;cursor:pointer;border-bottom:1px dotted var(--line-2);
+  display:inline-flex;align-items:baseline;gap:3px}
+.num:hover{border-bottom-color:var(--accent);color:var(--accent-ink)}
+.num.plain{cursor:default;border-bottom:0}
+.badge{font:600 9px/1.6 var(--sans);letter-spacing:.03em;border-radius:3px;padding:0 3px;border:0;
+  vertical-align:1px;white-space:nowrap}
+.c-high{color:var(--green);background:var(--green-soft)}
+.c-mid{color:var(--amber);background:var(--amber-soft)}
+.c-low{color:var(--red);background:var(--red-soft)}
+.c-unv{color:var(--violet);background:var(--violet-soft)}
+.c-input{color:var(--ink-2);background:var(--bg)}
+.reviewed{color:var(--accent);font-size:10px;margin-left:2px}
+
+/* ---------------------------------------------------------------- 燈號、標籤、法源 */
+.lamp{display:inline-flex;align-items:center;gap:5px;font-weight:600;font-size:12.5px;border-radius:999px;
+  padding:1px 9px;border:1px solid}
+.lamp.red{color:var(--red);border-color:var(--red);background:var(--red-soft)}
+.lamp.amber{color:var(--amber);border-color:var(--amber);background:var(--amber-soft)}
+.lamp.green{color:var(--green);border-color:var(--green);background:var(--green-soft)}
+.tag{display:inline-block;font-size:10.5px;border:1px solid var(--line-2);border-radius:999px;padding:0 7px;
+  color:var(--ink-2);background:var(--bg);margin:0 3px 3px 0}
+.legal{font:11.5px/1.45 var(--sans);color:var(--ink-3)}
+.legal b{color:var(--ink-2);font-weight:600}
+
+/* ---------------------------------------------------------------- 表格 */
+table.tbl{width:100%;border-collapse:collapse}
+.tbl th,.tbl td{padding:5px 8px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
+.tbl th{font-size:11px;letter-spacing:.04em;color:var(--ink-3);font-weight:600;white-space:nowrap}
+.tbl td{font-size:12.5px}
+.tbl td.r,.tbl th.r{text-align:right;font-variant-numeric:tabular-nums}
+.tbl tbody tr:hover{background:var(--bg)}
+.tbl tr.sel{background:var(--accent-soft)}
+.tbl tr.bad td{background:var(--red-soft)}
+.tbl tfoot td{font-weight:600;border-top:1px solid var(--line-2);border-bottom:0}
+.scroll-x{overflow-x:auto}
+.tall{max-height:320px;overflow:auto}
+
+/* ---------------------------------------------------------------- 整段文字框（全頁最多兩處） */
+.note{border-left:3px solid var(--line-2);padding:6px 10px;margin:8px 0;font-size:12.5px;color:var(--ink-2);
+  background:var(--bg);border-radius:0 6px 6px 0}
+.note.warn{border-left-color:var(--amber);background:var(--amber-soft);color:var(--amber)}
+.note.bad{border-left-color:var(--red);background:var(--red-soft);color:var(--red)}
+.note.good{border-left-color:var(--green);background:var(--green-soft);color:var(--green)}
+.note.info{border-left-color:var(--accent);background:var(--accent-soft);color:var(--accent-ink)}
+
+/* ---------------------------------------------------------------- 進度條與圖表 */
+.bar{height:5px;border-radius:3px;background:var(--line);overflow:hidden}
+.bar>i{display:block;height:100%;background:var(--accent)}
+svg.chart{display:block;width:100%;height:auto;overflow:visible}
+svg .ax{stroke:var(--line-2);stroke-width:1}
+svg .gl{stroke:var(--line);stroke-width:1;stroke-dasharray:3 3}
+svg text{fill:var(--ink-2);font:11px var(--sans)}
+svg text.lbl{fill:var(--ink);font-weight:600}
+.bar-pos{fill:var(--accent)}
+.bar-neg{fill:var(--red)}
+.dot-pos{fill:var(--accent)}
+
+/* ---------------------------------------------------------------- 抽屜 */
+.drawer-backdrop{position:fixed;inset:0;background:rgba(17,24,39,.28);z-index:70}
+.drawer{position:fixed;right:0;top:0;bottom:0;width:min(440px,94vw);background:var(--panel);
+  border-left:1px solid var(--line-2);z-index:71;overflow:auto;padding:16px}
+.drawer h3{font-size:15px}
+.drawer .kv{margin:12px 0}
+.drawer .kv>dd{text-align:left}
+.drawer pre{background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:8px;
+  font:12px/1.5 var(--mono);white-space:pre-wrap;word-break:break-word;margin:4px 0 0}
+
+/* ---------------------------------------------------------------- 可列印報告 */
+.report-layer{position:fixed;inset:0;background:var(--panel);z-index:80;overflow:auto;padding:0}
+.report-inner{max-width:900px;margin:0 auto;padding:20px 24px 60px}
+.report-inner h1{font-size:20px;letter-spacing:-.01em}
+.report-inner h2{font-size:14px;color:var(--ink-2);letter-spacing:.02em;margin:18px 0 6px;
+  padding-bottom:4px;border-bottom:1px solid var(--line)}
+.report-bar{position:sticky;top:0;display:flex;align-items:center;gap:8px;padding:8px 24px;
+  background:var(--panel);border-bottom:1px solid var(--line);z-index:1}
+body.reporting .topbar,body.reporting .wrap,body.reporting .footnote{display:none}
+
+.footnote{max-width:1500px;margin:0 auto;padding:0 16px 22px;font-size:11px;color:var(--ink-3)}
+
+/* ---------------------------------------------------------------- 列印 */
+@media print{
+  :root{--bg:#fff;--panel:#fff}
+  .topbar,.pane-in,.footnote,.no-print,.report-bar,.drawer,.drawer-backdrop,.menu{display:none!important}
+  .wrap{max-width:none;padding:0}
+  .cols{display:block}
+  .report-layer{position:static;overflow:visible}
+  .report-inner{max-width:none;padding:0}
+  .sec,.card,.hero{break-inside:avoid;border-color:#bbb}
+  .sec-body{display:block!important}
+  body{font-size:11px}
+  .hero .v{font-size:28px}
+}
