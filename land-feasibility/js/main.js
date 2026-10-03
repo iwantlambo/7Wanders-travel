@@ -654,7 +654,8 @@ window.TD = window.TD || {};
     { k: 'zoning', t: '土地使用分區' },
     { k: 'bonus', t: '容積獎勵目錄' },
     { k: 'cost', t: '成本與財務參數' },
-    { k: 'comps', t: '比較交易案例' }
+    { k: 'districts', t: '縣市與鄉鎮市區' },
+    { k: 'lvr', t: '實價登錄行情（各縣市）' }
   ];
 
   function dataMetaHtml() {
@@ -670,7 +671,7 @@ window.TD = window.TD || {};
       rows.push({
         name: set.t,
         asOf: meta.asOf ? String(meta.asOf) : '—',
-        state: (meta.verified === true) ? '已查證' : badge('unv'),
+        state: (meta.verified === true) ? '已查證' : '<span class="num plain">未附查證紀錄</span>',
         src: meta.source ? String(meta.source) : '—'
       });
     }
@@ -679,7 +680,7 @@ window.TD = window.TD || {};
       { k: 'asOf', label: '版本日期' },
       { k: 'state', label: '狀態', html: true },
       { k: 'src', label: '來源' }
-    ], rows, { empty: '沒有載入任何種子資料。', scrollX: false });
+    ], rows, { empty: '沒有載入任何資料檔。', scrollX: false });
   }
 
   /* ---- 覆寫與複核紀錄：逐列可清除 ---- */
