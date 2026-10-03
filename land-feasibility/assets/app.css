@@ -60,7 +60,13 @@ textarea{width:100%;height:auto;min-height:110px;font-family:var(--mono);font-si
 .wrap{max-width:1500px;margin:0 auto;padding:12px 16px 24px}
 .cols{display:grid;grid-template-columns:360px minmax(0,1fr);gap:14px;align-items:start}
 .pane-in{position:sticky;top:60px;max-height:calc(100vh - 72px);overflow:auto;
-  display:flex;flex-direction:column;gap:8px}
+  display:flex;flex-direction:column;gap:8px;overscroll-behavior:contain}
+/* 左欄是限高的直向 flex 容器。.sec 帶 overflow 時 flex 項目的最小高度會變成 0，
+   地號一多，區塊就被「壓扁」而不是讓左欄出現捲軸：基地區塊下半部被裁掉、
+   其他三塊只剩標題，而且焦點移到下方欄位時區塊會自己往內捲，上緣跟著消失，
+   使用者滑不回去（2026-09-29 版回報的「加地號後卡住、捲不動」）。
+   flex:none 讓每一塊維持內容高度，捲動一律交給 .pane-in。*/
+.pane-in>.sec{flex:none}
 .pane-out{display:flex;flex-direction:column;gap:10px;min-width:0}
 /* 界線與 docs/UI-V2.md 第 2 節的區間對齊：>=1100 兩欄 360px、900～1099 兩欄 320px、<900 單欄。
    這兩段一定要排在 .pane-in 的基礎規則之後：同樣的選擇器、同樣的權重，後面的才蓋得掉，
@@ -72,7 +78,8 @@ textarea{width:100%;height:auto;min-height:110px;font-family:var(--mono);font-si
 }
 
 /* ---------------------------------------------------------------- 收合區塊 */
-.sec{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden}
+/* overflow:clip（不支援的瀏覽器退回 hidden）：只裁圓角，不建立可被焦點偷偷捲動的捲動容器 */
+.sec{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;overflow:clip}
 .sec-head{display:flex;align-items:center;gap:8px;width:100%;text-align:left;border:0;background:transparent;
   padding:7px 10px;cursor:pointer;font:600 13px/1.4 var(--sans);letter-spacing:.02em;color:var(--ink-2)}
 .sec-head:hover{background:var(--bg)}
