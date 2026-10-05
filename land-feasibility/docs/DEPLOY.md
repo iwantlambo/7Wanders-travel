@@ -1,7 +1,8 @@
 # 部署指南
 
-這是一個**純靜態、完全離線**的網頁應用。沒有建置步驟、沒有 npm、沒有打包器、
-沒有後端、沒有資料庫、不發任何網路請求。
+這是一個**純靜態、預設離線**的網頁應用。沒有建置步驟、沒有 npm、沒有打包器、
+沒有後端、沒有資料庫；除非使用者自己按下「自動研究」（自備 Anthropic API 金鑰，瀏覽器直接連 `api.anthropic.com`），
+不發任何網路請求。
 
 因此部署有兩種層次：最簡單的那種根本不叫部署，複製檔案就是部署。
 
@@ -38,9 +39,12 @@
 網站根目錄/
   index.html        ← 必須在根目錄
   assets/app.css
-  js/lib/ js/data/ js/engine/ js/ui/ js/main.js
+  js/lib/ js/data/ js/engine/ js/ui/ js/vendor/ js/main.js
   docs/             ← 可以不上傳，但留著方便查
 ```
+
+`js/vendor/anthropic-sdk.js` 是自動研究用的官方 SDK（只在按下研究時載入），一起上傳；少了它其他功能照常，只有自動研究無法使用。
+主機若有設定 Content-Security-Policy，`connect-src` 要加上 `https://api.anthropic.com`，自動研究才連得上。
 
 不要只上傳 `js/`，也不要把 `index.html` 放進子資料夾再上傳。
 `index.html` 用的全部是相對路徑，所以放在子目錄（例如 `https://example.com/land/`）也能正常運作，

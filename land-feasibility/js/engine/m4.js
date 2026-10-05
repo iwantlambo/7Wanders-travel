@@ -152,7 +152,7 @@ window.TD = window.TD || {};
     if (site.siteWidth > 0 && site.siteDepth > 0) {
       plate = Math.min(plate, site.siteWidth * Math.max(0, site.siteDepth - numOr(m3.setbackFrontM, 0)));
     }
-    var perLevel = numOr(site.siteM2, 0) * Math.min(0.8, numOr(TD.raw(m3.bcr), 0.6) + 0.1);
+    var perLevel = numOr(site.siteM2, 0) * (isNum(site.excavRatio) ? site.excavRatio : Math.min(0.8, numOr(TD.raw(m3.bcr), 0.6) + 0.1));
 
     /* 整棟概估（與量體段、成本段同一套規則）：用來算「多一份容積」對整棟營建費、地下室與車位的影響 */
     function project(volM2) {
@@ -162,7 +162,8 @@ window.TD = window.TD || {};
               : (cost.perPingOf ? cost.perPingOf(site.product, floors) : 250000) * cityF;
       var sell = volM2 / TD.PING * sellRatio;
       var units = unitPing > 0 ? Math.floor(sell / unitPing) : 0;
-      var legal = (pk59 && volM2 > 0) ? Math.max(0, Math.ceil((volM2 - pk59.exemptM2) / pk59.perM2)) : 0;
+      var legal = (site.parkingRule && TD.engine.certParking) ? TD.engine.certParking(site.parkingRule, volM2, units) : null;
+      if (legal === null) legal = (pk59 && volM2 > 0) ? Math.max(0, Math.ceil((volM2 - pk59.exemptM2) / pk59.perM2)) : 0;
       var stalls = Math.max(legal, Math.ceil(units * stallRatio));
       var bm2 = prm.basement === false ? 0 : stalls * perStallM2;
       if (prm.basement !== false && floors >= 6) bm2 = Math.max(bm2, perLevel);
@@ -201,7 +202,7 @@ window.TD = window.TD || {};
       siteM2: siteM2, bcr: bcr, far: far, baseFloorM2: base, zoneCls: site.zoneCls, roadWidth: site.roadWidth,
       frontageM: site.frontageM, hrStatus: site.hrStatus, buildingAgeYears: site.buildingAgeYears,
       existingFloorM2: site.existingFloorM2, mrtDistanceM: site.mrtDistanceM, city: site.city,
-      urDesignated: !!cfg.urDesignated,
+      urDesignated: !!cfg.urDesignated || !!site.urDesignated,
       hardCostEst: proj0.hard
     };
 
@@ -238,6 +239,7 @@ window.TD = window.TD || {};
 
     function itemBlocked(b, rg) {
       var req = b.requires || {};
+      if (b.id === 'TDR' && site.tdrBanned) return '分區證明書載明本基地不得作為容積移轉接受基地';
       if (req.regimes && req.regimes.indexOf(rg.id) < 0) return '僅適用' + req.regimes.join('／');
       if (req.zoneCls && req.zoneCls.indexOf(site.zoneCls) < 0) return '本案分區不適用';
       if (req.cities && req.cities.indexOf(site.city) < 0) return '僅適用' + req.cities.join('、');

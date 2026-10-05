@@ -28,6 +28,7 @@
 3. **不可使用 `fetch()` 讀取本地 JSON**，同上理由。所有資料以 `.js` 檔寫成，直接掛到 `window.TD.data`。
 4. **不可引入任何外部 CDN**（字型、圖表庫、框架一律不用）。圖表用手寫 inline SVG。
 5. **完全離線：整個專案不得出現任何 `fetch`、`XMLHttpRequest`、`WebSocket`、`navigator.sendBeacon` 或第三方 script。** 唯一允許的對外連結是 `<a href>` 的法規查詢連結，且必須由使用者自己點。
+   **例外（2026-10-06 使用者決定）**：「自動研究」可在使用者自備 Anthropic API 金鑰並按下按鈕時，延遲載入同資料夾的官方 SDK（`js/vendor/anthropic-sdk.js`）並連到 `api.anthropic.com`。網路程式只能出現在 `js/lib/research.js` 與該 SDK 檔；`index.html` 不得載入 SDK；`tools/checkall.sh` 第 4c 項檢查。
 6. **語法限 ES5 風格**：`var` / `function`，不要用箭頭函式、`let`/`const`、樣板字串、解構、`class`、選擇性鏈結。全檔一致。字串串接用 `+`。
 7. **引擎層（`js/engine/*.js`）必須是純函式**：不得觸碰 `document`、`localStorage`、`alert`。只吃資料、吐資料。這是為了能在 Node 下測試。
 8. UI 層（`js/ui/*.js`）才可以碰 DOM。

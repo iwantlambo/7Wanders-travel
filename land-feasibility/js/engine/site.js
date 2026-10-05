@@ -70,13 +70,19 @@ window.TD = window.TD || {};
     return t;
   }
 
-  /* 分區查表：先查原鍵與別名；查不到時依字首退到住宅區／商業區（非臺北市的縣市沒有「住三」這種代碼）*/
+  /* 分區查表：先查原鍵與別名（證明書寫全名「第三種住宅區之一」時改查簡稱「住三之一」）；
+     查不到時依字首退到住宅區／商業區（非臺北市的縣市沒有「住三」這種代碼）*/
   function zoneOf(city, zone, district, roadWidth) {
-    var Zd = TD.data && TD.data.zoning;
+    var Zd = TD.data && TD.data.zoning, CU = TD.engine.certUtil;
     if (!Zd || typeof Zd.lookup !== 'function') return null;
-    var z = Zd.lookup(city, zone, district, roadWidth);
+    var s = trim(zone).replace(/\((?:特|再|核|中|新)\)$/, '');
+    var z = Zd.lookup(city, s, district, roadWidth);
     if (z) return z;
-    var s = trim(zone);
+    if (CU && CU.shortName && CU.shortName(s)) {
+      z = Zd.lookup(city, CU.shortName(s), district, roadWidth);
+      if (z) return z;
+    }
+    if (/用地$|保留地$/.test(s)) return null;
     if (/住/.test(s)) z = Zd.lookup(city, '住宅區', district, roadWidth);
     else if (/商/.test(s)) z = Zd.lookup(city, '商業區', district, roadWidth);
     else if (/工/.test(s)) z = Zd.lookup(city, '乙種工業區', district, roadWidth);
@@ -93,11 +99,67 @@ window.TD = window.TD || {};
     return '住宅大樓';
   }
 
+  /* 證明書上的分區不在內建分區表時（公共設施用地、產業專用區、各縣市特殊分區），
+     以證明書為準建一份分區資料：建蔽率與容積率由法規檢討改用證明書所載數值。*/
+  function certZone(name) {
+    var CU = TD.engine.certUtil, cls = (CU && CU.clsOf) ? CU.clsOf(name) : '其他';
+    return { name: name, cls: cls, bcr: null, far: null, conf: 'input', src: '土地使用分區證明書',
+             note: '「' + name + '」不在內建分區表，建蔽率、容積率與允許用途以分區證明書與該細部計畫為準。',
+             allowRes: (cls === '住' || cls === '商'), product: (cls === '工') ? '廠辦' : '住宅大樓',
+             verified: false, article: '', key: name, farReason: '', fromCert: true };
+  }
+
+  /* 證明書逐筆地號的分區對照：整筆為公共設施用地者（道路、公園…）不得建築，面積自基準容積扣除；
+     部分為公共設施用地者無法自動切分，只出警示。*/
+  function publicLandOf(cert, numbers) {
+    var CU = TD.engine.certUtil, out = { whole: [], partial: [], wholeM2: 0, missing: [] }, i, j, pz, no, row, allPub, anyPub;
+    if (!cert || !CU) return out;
+    var mine = {};
+    for (i = 0; numbers && i < numbers.length; i++) {
+      row = numbers[i] || {};
+      no = CU.canonNo(row.no);
+      if (no) mine[no] = Number(row.areaM2) > 0 ? Number(row.areaM2) : 0;
+    }
+    for (i = 0; i < cert.parcelZones.length; i++) {
+      pz = cert.parcelZones[i];
+      allPub = true; anyPub = false;
+      for (j = 0; j < pz.zones.length; j++) {
+        if (CU.clsOf(pz.zones[j]) === '公') anyPub = true; else allPub = false;
+      }
+      if (!anyPub) continue;
+      if (allPub && Object.prototype.hasOwnProperty.call(mine, pz.no)) {
+        out.whole.push({ no: pz.no, areaM2: mine[pz.no], zone: pz.zones.join('、'), line: pz.line });
+        out.wholeM2 += mine[pz.no];
+      } else {
+        out.partial.push({ no: pz.no, zone: pz.zones.join('、'), line: pz.line });
+      }
+    }
+    for (i = 0; i < cert.parcels.length; i++) if (!Object.prototype.hasOwnProperty.call(mine, cert.parcels[i])) out.missing.push(cert.parcels[i]);
+    return out;
+  }
+
+  /* 這個欄位的值是不是「自動研究」填進來的（使用者之後改過就不算）*/
+  function researchFilled(p, path, cur) {
+    var r = p && p.research && p.research.result, list = (r && Object.prototype.toString.call(r.applied) === '[object Array]') ? r.applied : [], i;
+    for (i = 0; i < list.length; i++) {
+      if (list[i] && list[i].path === path && isNum(Number(cur)) && Number(list[i].value) === Number(cur)) return true;
+    }
+    return false;
+  }
+
   function siteOf(p) {
     p = p || {};
     var pc = p.parcel || {};
-    var city = trim(pc.city), district = trim(pc.district), zoneIn = trim(pc.zone);
+    var city = trim(pc.city), district = trim(pc.district), zoneSel = trim(pc.zone), zoneIn = zoneSel;
     var assumed = [];
+
+    /* 分區證明書／細部計畫條文：有貼上時，使用分區與各項強度以證明書為準（左欄下拉不採用）*/
+    var cert = null, zoneFrom = 'select';
+    if (TD.engine.parseCert && trim(pc.certText)) {
+      try { cert = TD.engine.parseCert(pc.certText, { zone: zoneSel }); } catch (e) { cert = null; }
+      if (cert && cert.zone) { zoneIn = cert.zone; zoneFrom = 'cert'; }
+    }
+    var cp = (cert && cert.pick) ? cert.pick : {};
 
     var roadIn = Number(pc.roadWidth);
     var roadWidth = (isFinite(roadIn) && roadIn > 0) ? roadIn : DEFAULT_ROAD_M;
@@ -106,6 +168,7 @@ window.TD = window.TD || {};
     }
 
     var z = zoneOf(city, zoneIn, district, (isFinite(roadIn) && roadIn > 0) ? roadIn : null);
+    if (!z && zoneFrom === 'cert') z = certZone(cert.zone);
     var siteM2 = areaOf(pc.numbers);
 
     /* 工業區變更：分區換成新分區（容積率依行政區），基準容積以回饋後剩餘土地計 */
@@ -142,13 +205,30 @@ window.TD = window.TD || {};
     var product = (PRODUCTS.indexOf(prodIn) >= 0) ? prodIn : autoProduct(z);
     var productAuto = PRODUCTS.indexOf(prodIn) < 0;
     var useConflict = '';
-    if (z && !z.allowRes && (product === '住宅大樓' || product === '華廈' || product === '透天厝')) {
+    if (z && z.cls === '公') {
+      useConflict = '分區證明書所載「' + z.name + '」為公共設施用地，不得作一般建築開發；'
+                  + '公共設施保留地可評估捐贈作為容積移轉送出基地或等待徵收。';
+    } else if (z && !z.allowRes && (product === '住宅大樓' || product === '華廈' || product === '透天厝')) {
       useConflict = z.name + '不得作住宅使用（' + (z.src || '各該都市計畫') + '），產品「' + product
                   + '」與分區不符；除非完成都市計畫變更，否則請改用廠辦或其他許可用途試算。';
     }
 
+    /* 捷運場站距離：使用者輸入 > 證明書（「周邊 500 公尺範圍內」取 500 公尺，偏保守）*/
+    var mrtIn = isFinite(Number(pc.mrtDistanceM)) && Number(pc.mrtDistanceM) > 0 ? Number(pc.mrtDistanceM) : null;
+    var mrt = mrtIn, mrtFrom = mrtIn !== null ? (researchFilled(p, 'parcel.mrtDistanceM', mrtIn) ? 'research' : 'input') : '';
+    if (mrt === null && cp.mrt && isNum(cp.mrt.v)) { mrt = cp.mrt.v; mrtFrom = 'cert'; }
+    var hLimit = null;
+    if (cp.heightLimitM && isNum(cp.heightLimitM.v)) hLimit = cp.heightLimitM.v;
+
     return {
-      city: city, district: district, zoneInput: zoneIn,
+      city: city, district: district, zoneInput: zoneIn, zoneSelected: zoneSel, zoneFrom: zoneFrom,
+      cert: cert, certPick: cert ? cp : null, publicLand: publicLandOf(cert, pc.numbers),
+      heightLimitM: hLimit, floorLimit: (cp.floorLimit && isNum(cp.floorLimit.v)) ? cp.floorLimit.v : null,
+      excavRatio: (cp.excavRatio && isNum(cp.excavRatio.v)) ? cp.excavRatio.v : null,
+      parkingRule: cp.parking || null, minSiteM2: (cp.minSiteM2 && isNum(cp.minSiteM2.v)) ? cp.minSiteM2.v : null,
+      urDesignated: !!cp.urDesignated, tdrBanned: !!cp.tdrBanned, mrtFrom: mrtFrom,
+      roadFromResearch: (isFinite(roadIn) && roadIn > 0) ? researchFilled(p, 'parcel.roadWidth', roadIn) : false,
+      ageFromResearch: researchFilled(p, 'parcel.buildingAgeYears', Number(pc.buildingAgeYears)),
       zone: z, zoneFound: !!z, zoneCls: z ? z.cls : '',
       origZone: origZone, rezone: rz, rezoneable: !!(origZone && origZone.cls === '工'),
       allowRes: z ? !!z.allowRes : true,
@@ -160,7 +240,7 @@ window.TD = window.TD || {};
       corner: !!pc.corner,
       siteWidth: w, siteDepth: d, shapeAssumed: shapeAssumed, frontageM: frontage,
       northZone: trim(pc.northZone) || 'same',
-      mrtDistanceM: isFinite(Number(pc.mrtDistanceM)) && Number(pc.mrtDistanceM) > 0 ? Number(pc.mrtDistanceM) : null,
+      mrtDistanceM: mrt,
       hrStatus: trim(pc.hrStatus) || 'auto',
       buildingAgeYears: isFinite(Number(pc.buildingAgeYears)) ? Number(pc.buildingAgeYears) : 0,
       existingFloorM2: isFinite(Number(pc.existingFloorM2)) ? Number(pc.existingFloorM2) : 0,

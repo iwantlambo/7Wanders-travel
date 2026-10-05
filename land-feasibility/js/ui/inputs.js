@@ -81,21 +81,25 @@ window.TD = window.TD || {};
              reason: z ? (z.farReason || '') : '' };
   }
 
-  function ratioRow(p, site) {
-    var s = seededRatios(p), h = '';
-    if (site && site.rezone && site.zone) {
+  function ratioRow(p, site, m3) {
+    var s = seededRatios(p), h = '', lb = '法定', lf = '法定';
+    if (site && site.zone && (site.rezone || site.zoneFrom === 'cert')) {
       s = { bcr: isNum(site.zone.bcr) ? site.zone.bcr : null, far: isNum(site.zone.far) ? site.zone.far : null,
-            reason: '變更後之' + site.zone.name + '：' + (site.zone.farReason || '依該計畫區') };
+            reason: site.rezone ? '變更後之' + site.zone.name + '：' + (site.zone.farReason || '依該計畫區') : (site.zone.farReason || '') };
     }
+    /* 分區證明書有載明時，留白＝證明書數值（法規檢討實際採用的值）*/
+    var cu = (m3 && m3.certUse) || {};
+    if (cu.bcr === 'used' && m3 && isNum(TD.raw(m3.bcr))) { s.bcr = TD.raw(m3.bcr); lb = '證明書'; }
+    if (cu.far === 'used' && m3 && isNum(TD.raw(m3.far))) { s.far = TD.raw(m3.far); lf = '證明書'; }
     h += row('', f('建蔽率 %', 'm3.overrides.bcr', {
         type: 'pct', min: 0, max: 100,
         placeholder: s.bcr === null ? '請輸入' : String(TD.math.round(s.bcr * 100, 1)),
-        hint: s.bcr === null ? '依分區證明書輸入' : '留白＝法定 ' + TD.math.round(s.bcr * 100, 1) + '%'
+        hint: s.bcr === null ? '依分區證明書輸入' : '留白＝' + lb + ' ' + TD.math.round(s.bcr * 100, 1) + '%'
       })
       + f('容積率 %', 'm3.overrides.far', {
         type: 'pct', min: 0, max: 2000,
         placeholder: s.far === null ? '請輸入' : String(TD.math.round(s.far * 100, 1)),
-        hint: s.far === null ? '依分區證明書輸入' : '留白＝法定 ' + TD.math.round(s.far * 100, 1) + '%'
+        hint: s.far === null ? '依分區證明書輸入' : '留白＝' + lf + ' ' + TD.math.round(s.far * 100, 1) + '%'
       }));
     if (s.reason) h += '<p class="legal">' + esc(s.reason) + '</p>';
     if (s.bcr === null || s.far === null) {
@@ -155,6 +159,11 @@ window.TD = window.TD || {};
     h += parcelRows(p);
     h += row('', f('使用分區', 'parcel.zone', { options: zoneOptions(p) })
       + f('產品類型', 'parcel.productType', { options: productOptions() }));
+    if (site && site.zoneFrom === 'cert') {
+      var cz = site.cert.zone, same = TD.engine.certUtil && TD.engine.certUtil.zoneMatch(site.zoneSelected, cz) >= 2;
+      h += same ? '<p class="legal">使用分區依分區證明書：<b>' + esc(cz) + '</b>。</p>'
+                : U().noteText('warn', '使用分區依分區證明書為「' + cz + '」，上方下拉選的「' + (site.zoneSelected || '未選') + '」不採用。');
+    }
     if (site && site.productAuto) {
       h += '<p class="legal">自動判定為「' + esc(site.product) + '」'
          + (site.allowRes ? '' : '（' + esc(site.zone ? site.zone.name : '本分區') + '不得作住宅使用）') + '。</p>';
@@ -165,15 +174,16 @@ window.TD = window.TD || {};
       if (site.rezone) h += '<p class="legal">' + esc(site.rezone.note) + '</p>';
       else h += '<p class="legal">工業區土地常以「變更為住宅／商業區」或「工業區都更」的潛力交易；選擇變更路線可試算回饋後的住宅、商業開發價值。</p>';
     }
-    h += ratioRow(p, site);
+    h += ratioRow(p, site, ctx && ctx.m3);
     h += row('three', f('面前道路寬 m', 'parcel.roadWidth', { type: 'num', min: 0, placeholder: '8' })
       + f('臨路長度 m', 'parcel.frontageM', { type: 'num', min: 0 })
       + f('臨路條數', 'parcel.roadCount', { type: 'num', min: 0, step: '1' }));
     h += row('three', f('基地寬 m', 'parcel.siteWidth', { type: 'num', min: 0 })
       + f('基地深 m', 'parcel.siteDepth', { type: 'num', min: 0 })
-      + f('臨路退縮 m', 'm3.setbackFrontM', { type: 'num', min: 0, placeholder: placeholderSetback(p) }));
+      + f('臨路退縮 m', 'm3.setbackFrontM', { type: 'num', min: 0, placeholder: placeholderSetback(p, site) }));
     h += row('', f('北側鄰地分區', 'parcel.northZone', { options: NORTH_OPTS })
-      + f('距捷運／鐵路站 m', 'parcel.mrtDistanceM', { type: 'num', min: 0, placeholder: '未輸入' }));
+      + f('距捷運／鐵路站 m', 'parcel.mrtDistanceM', { type: 'num', min: 0,
+          placeholder: (site && site.mrtFrom === 'cert') ? '證明書 ' + site.mrtDistanceM : '未輸入' }));
     if (site && site.assumed && site.assumed.length) {
       h += '<p class="legal">未填欄位暫用預設：' + esc(site.assumed.join('；')) + '。</p>';
     }
@@ -185,7 +195,8 @@ window.TD = window.TD || {};
     return h;
   }
 
-  function placeholderSetback(p) {
+  function placeholderSetback(p, site) {
+    if (site && site.certPick && site.certPick.setbackFrontM && isNum(site.certPick.setbackFrontM.v)) return String(site.certPick.setbackFrontM.v);
     var city = (p && p.parcel && p.parcel.city) || '';
     var c = TD.data && TD.data.zoning && TD.data.zoning.cities ? TD.data.zoning.cities[city] : null;
     return (c && c.setback && isNum(c.setback.frontM)) ? String(c.setback.frontM) : '0';
@@ -200,6 +211,97 @@ window.TD = window.TD || {};
     if (st === 'loading') return '<p class="legal">正在載入' + esc(city) + '實價登錄行情…</p>';
     if (st === 'failed') return U().noteText('warn', city + '實價登錄行情檔載入失敗，比價暫用保守單價；請確認網站檔案完整後重新整理。');
     return '';
+  }
+
+  /* ------------------------------------------------------------------
+     1b. 分區證明書／細部計畫條文：貼上後以證明書為準
+     ------------------------------------------------------------------ */
+
+  var CERT_PH = '例：\n使用分區（或公共設施用地）：乙種工業區\n建蔽率不得大於60％，容積率不得大於210％。\n'
+              + '建築基地應自道路境界線至少退縮4公尺建築。\n（可貼整份證明書，或細部計畫土管要點的條文）';
+  var CERT_ST = { used: '採用', overridden: '左欄輸入優先' };
+
+  function certStatus(k, site, m3) {
+    var cu = (m3 && m3.certUse) || {};
+    if (k === 'zone') return (site && site.zoneFrom === 'cert') ? '採用' : '';
+    if (k === 'bcr') return CERT_ST[cu.bcr] || '';
+    if (k === 'far' || k === 'narrow') return CERT_ST[cu.far] || (k === 'narrow' ? '路寬未達時採用' : '');
+    if (k === 'setback') return CERT_ST[cu.setback] || '';
+    if (k === 'height' || k === 'floors') return cu.height ? '採用' : '';
+    if (k === 'parking') return cu.parking ? '採用' : '';
+    if (k === 'mrt') return (site && site.mrtFrom === 'cert') ? '採用' : ((site && site.mrtFrom === 'input') ? '左欄輸入優先' : '');
+    if (k === 'excav' || k === 'ur' || k === 'tdr' || k === 'minSite') return '採用';
+    return '';
+  }
+
+  function certBody(ctx, p) {
+    var m3 = (ctx && isObj(ctx.m3)) ? ctx.m3 : null;
+    var site = (m3 && isObj(m3.site)) ? m3.site : null;
+    var cert = site ? site.cert : null;
+    var h = '<p class="legal">貼上該地號的「土地使用分區證明書」全文，或細部計畫土地使用分區管制要點的條文。'
+          + '使用分區、建蔽率、容積率、退縮、高度、開挖率與停車標準改用貼上的數值（左欄手動輸入的仍優先），附帶條件列入風險。</p>';
+    h += '<div class="field"><textarea data-bind="parcel.certText" rows="6" placeholder="' + esc(CERT_PH) + '"></textarea></div>';
+    h += '<div class="inline" style="margin:6px 0">'
+       + '<button type="button" class="btn btn-sm" data-act="recalc">解析</button>'
+       + '<button type="button" class="btn btn-sm btn-ghost" data-act="clearCert">清空</button>'
+       + '</div>';
+    if (!cert || !cert.hasText) return h;
+
+    var rows = [], i, r;
+    for (i = 0; i < cert.rows.length; i++) {
+      r = cert.rows[i];
+      rows.push({ label: r.label, value: r.value, line: r.line ? '第' + r.line + '行' : '', st: certStatus(r.k, site, m3) });
+    }
+    if (rows.length) {
+      h += U().table([
+        { k: 'label', label: '項目' },
+        { k: 'value', label: '抓到的值', render: function (v) {
+          return '<span title="' + esc(String(v || '')) + '">' + esc(cut(v, 26)) + '</span>';
+        } },
+        { k: 'line', label: '原文' },
+        { k: 'st', label: '狀態' }
+      ], rows, { empty: '' });
+    } else {
+      h += U().noteText('warn', '沒有抓到使用分區、建蔽率或容積率。請確認貼的是分區證明書或細部計畫土管要點的條文。');
+    }
+    var conds = isArr(cert.conditions) ? cert.conditions : [];
+    if (conds.length) {
+      h += '<div class="field-label" style="margin-top:8px">附帶條件與提醒　<span class="hint">' + esc(String(conds.length)) + ' 則，已列入風險</span></div>';
+      h += '<ul class="legal" style="margin:2px 0 0;padding-left:16px">';
+      for (i = 0; i < conds.length && i < 10; i++) {
+        h += '<li title="' + esc(conds[i].raw || '') + '"><b>' + esc(conds[i].cat) + '</b>　第 ' + esc(String(conds[i].line)) + ' 行：'
+           + esc(cut(conds[i].text, 60)) + '</li>';
+      }
+      if (conds.length > 10) h += '<li>…另 ' + esc(String(conds.length - 10)) + ' 則</li>';
+      h += '</ul>';
+    }
+    var un = isArr(cert.unparsed) ? cert.unparsed : [];
+    if (un.length) {
+      h += '<div class="field-label" style="margin-top:8px">含管制字詞但未解析　<span class="hint">' + esc(String(un.length)) + ' 行，請人工核對</span></div>';
+      h += '<ul class="legal" style="margin:2px 0 0;padding-left:16px">';
+      for (i = 0; i < un.length && i < UNPARSED_SHOW; i++) h += '<li title="' + esc(un[i]) + '">' + esc(cut(un[i], 64)) + '</li>';
+      if (un.length > UNPARSED_SHOW) h += '<li>…另 ' + esc(String(un.length - UNPARSED_SHOW)) + ' 行</li>';
+      h += '</ul>';
+    }
+    var pl = site.publicLand || {};
+    if (pl.missing && pl.missing.length) {
+      h += U().noteText('warn', '證明書列出的地號 ' + pl.missing.join('、') + ' 不在上方地號列；若是本案基地，請補上地號與面積。');
+    }
+    return h;
+  }
+
+  function certSub(ctx, p) {
+    var site = (ctx && ctx.m3 && isObj(ctx.m3.site)) ? ctx.m3.site : null;
+    var cert = site ? site.cert : null;
+    if (!cert || !cert.hasText) return '未貼上（貼上後以證明書為準）';
+    if (!cert.rows.length) return '未抓到數值';
+    var m3 = ctx.m3, parts = [];
+    if (cert.zone) parts.push(cert.zone);
+    if (m3 && m3.certUse && m3.certUse.bcr === 'used' && m3.certUse.far === 'used') {
+      parts.push(TD.math.round(TD.raw(m3.bcr) * 100, 1) + '%／' + TD.math.round(TD.raw(m3.far) * 100, 1) + '%');
+    }
+    if (cert.conditions.length) parts.push(cert.conditions.length + ' 則條件');
+    return parts.join('　') || '已解析';
   }
 
   /* ------------------------------------------------------------------
@@ -520,7 +622,8 @@ window.TD = window.TD || {};
     var a = (ctx && ctx.m1 && ctx.m1.areaM2) ? TD.raw(ctx.m1.areaM2) : null;
     if (!isNum(a) || a <= 0) return '未填面積';
     var u = (p && p.units === 'm2') ? 'm2' : 'ping';
-    return TD.fmt.area(a, u, 1) + '　' + ((p && p.parcel && p.parcel.zone) || '');
+    var site = (ctx && ctx.m3 && isObj(ctx.m3.site)) ? ctx.m3.site : null;
+    return TD.fmt.area(a, u, 1) + '　' + ((site && site.zoneInput) || (p && p.parcel && p.parcel.zone) || '');
   }
 
   function regimeSub(ctx, p) {
@@ -557,10 +660,14 @@ window.TD = window.TD || {};
     }
     var h = '';
     h += fixedSec('in-site', '基地', areaSub(ctx, p), siteBody(ctx, p));
+    h += U().sec('in-cert', '分區證明書／細部計畫', certBody(ctx, p), open('in-cert', false),
+      { sub: certSub(ctx, p) });
     h += U().sec('in-deed', '謄本', deedBody(ctx, p), open('in-deed', false),
       { sub: deedSub(ctx, p) });
     h += U().sec('in-regime', '開發方式與容積獎勵', regimeBody(ctx, p), open('in-regime', false),
       { sub: regimeSub(ctx, p) });
+    h += U().sec('in-auto', '自動研究（Claude 上網查核）', U().researchBody ? U().researchBody(ctx, p) : '', open('in-auto', false),
+      { sub: U().researchSub ? U().researchSub(ctx, p) : '' });
     h += U().sec('in-research', '研究行情（新案開價、土地成交）', researchBody(ctx, p), open('in-research', false),
       { sub: researchSub(ctx) });
     h += U().sec('in-adv', '進階假設', advBody(ctx, p), open('in-adv', false),

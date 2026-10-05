@@ -893,9 +893,136 @@ window.TD = window.TD || {};
     refresh();
   };
 
+  TD.actions.clearCert = function () {
+    if (!ask('清空分區證明書文字？清空後建蔽率、容積率等改回內建分區表。')) return;
+    TD.store.set(S.p, 'parcel.certText', '');
+    refresh();
+  };
+
   TD.actions.clearDeed = function () {
     if (!ask('清空謄本全文？')) return;
     TD.store.set(S.p, 'parcel.deedText', '');
+    refresh();
+  };
+
+  /* ---- 自動研究（Claude 網路搜尋；使用者自備金鑰，按下才連網） ---- */
+
+  var RS = { running: false, log: [], error: '', ctl: null, timer: null };
+
+  function researchState() { return RS; }
+
+  function todayStr() {
+    try {
+      var d = new Date();
+      return d.getFullYear() + '-' + (d.getMonth() < 9 ? '0' : '') + (d.getMonth() + 1) + '-' + (d.getDate() < 10 ? '0' : '') + d.getDate();
+    } catch (e) { return ''; }
+  }
+
+  /* 進度事件很密，畫面最多每 0.7 秒重繪一次 */
+  function researchRedraw() {
+    if (RS.timer) return;
+    RS.timer = window.setTimeout(function () { RS.timer = null; render(); }, 700);
+  }
+
+  function researchLog(evt) {
+    if (!evt || !evt.text) return;
+    var last = RS.log.length ? RS.log[RS.log.length - 1] : null;
+    if (last && last.type === evt.type && last.text === String(evt.text)) return;
+    RS.log.push({ type: evt.type, text: String(evt.text) });
+    if (RS.log.length > 80) RS.log.splice(0, RS.log.length - 80);
+    researchRedraw();
+  }
+
+  TD.actions.researchKeySave = function () {
+    var el = byId('researchKey'), rem = byId('researchRemember');
+    var k = el ? trim(el.value) : '';
+    if (!k) { say('請先貼上 Anthropic API 金鑰。'); return; }
+    if (!/^sk-ant-/.test(k) && !ask('這不像 Anthropic API 金鑰（通常以 sk-ant- 開頭），仍要使用嗎？')) return;
+    TD.research.setKey(k, !!(rem && rem.checked));
+    if (el) el.value = '';
+    render();
+  };
+
+  TD.actions.researchKeyForget = function () {
+    TD.research.forgetKey();
+    render();
+  };
+
+  TD.actions.researchBaseSave = function () {
+    var el = byId('researchBase');
+    if (!TD.research.setBase(el ? el.value : '')) { say('端點必須是 http:// 或 https:// 開頭的網址。'); return; }
+    render();
+  };
+
+  /* pRef 是按下研究時的專案：研究期間切換到別的專案，結果仍寫回原專案 */
+  function applyResearch(res, pRef) {
+    var q = pRef || S.p, stamp = todayStr(), facts = TD.research.factsToApply(res, q), applied = [], i;
+    for (i = 0; i < facts.length; i++) {
+      TD.store.set(q, facts[i].path, facts[i].value);
+      applied.push({ path: facts[i].path, value: facts[i].value, label: facts[i].label, source: facts[i].source, url: facts[i].url });
+    }
+    TD.store.set(q, 'm6.researchText', TD.research.mergeText(q.m6.researchText, TD.research.autoBlock(res, stamp)));
+    res.at = Date.now();
+    res.stamp = stamp;
+    res.applied = applied;
+    /* 結果直接放進專案（不經 TD.store.set，避免整份結果複製進修改紀錄）*/
+    q.research.result = res;
+    try { TD.store.save(q); } catch (e) { say('儲存失敗：' + errText(e)); }
+    RS.log.push({ type: 'submit', text: '完成：價格 ' + (res.prices || []).length + ' 筆、查核 ' + (res.checks || []).length + ' 項'
+                + (q !== S.p ? '（已寫回專案「' + (q.name || '未命名') + '」）' : '') });
+    refresh();
+  }
+
+  TD.actions.researchStart = function () {
+    if (RS.running) return;
+    if (!TD.research) { say('自動研究元件未載入（js/lib/research.js）。'); return; }
+    var key = TD.research.key();
+    if (!key) { say('請先輸入 Anthropic API 金鑰。'); return; }
+    var b;
+    try { b = TD.research.brief(S.ctx, S.p, todayStr()); } catch (e) { say('整理基地資料失敗：' + errText(e)); return; }
+    if (!ask('將把以下資料送到 Anthropic（Claude）進行網路研究：\n\n' + b.sent.join('\n')
+        + '\n\n不送謄本全文與所有權人。費用由你的 API 帳戶支付（通常約 1～3 美元）。繼續？')) return;
+    RS.running = true;
+    RS.log = [];
+    RS.error = '';
+    var pRef = S.p;
+    RS.ctl = TD.research.run({
+      key: key, base: TD.research.base(), ctx: S.ctx, p: S.p,
+      effort: (S.p.research && S.p.research.effort) || 'medium', today: todayStr(),
+      onProgress: researchLog,
+      onDone: function (res) {
+        RS.running = false;
+        RS.ctl = null;
+        try { applyResearch(res, pRef); } catch (e) { RS.error = '寫入結果失敗：' + errText(e); render(); }
+      },
+      onError: function (msg) {
+        RS.running = false;
+        RS.ctl = null;
+        RS.error = String(msg || '未知錯誤');
+        render();
+      }
+    });
+    render();
+  };
+
+  TD.actions.researchStop = function () {
+    if (RS.ctl) RS.ctl.abort();
+  };
+
+  TD.actions.researchUndo = function () {
+    var r = S.p && S.p.research ? S.p.research.result : null, i, a, cur;
+    if (!r) return;
+    if (!ask('移除自動研究結果？「研究行情」裡的自動研究區塊會刪除，自動填入且之後沒改過的欄位會清空。')) return;
+    TD.store.set(S.p, 'm6.researchText', TD.research.stripAuto(S.p.m6.researchText));
+    for (i = 0; r.applied && i < r.applied.length; i++) {
+      a = r.applied[i];
+      cur = TD.store.get(S.p, a.path);
+      if (Number(cur) === Number(a.value)) TD.store.set(S.p, a.path, a.path === 'parcel.buildingAgeYears' ? 0 : null);
+    }
+    S.p.research.result = null;
+    persist();
+    RS.error = '';
+    RS.log = [];
     refresh();
   };
 
@@ -1272,7 +1399,7 @@ window.TD = window.TD || {};
 
   /* 對外（測試用；不是契約的一部分） */
   TD.app = { boot: boot, refresh: refresh, recalc: recalc, render: render, state: S,
-    parseComps: parseComps, lvrState: lvrState, ensureLvr: ensureLvr };
+    parseComps: parseComps, lvrState: lvrState, ensureLvr: ensureLvr, researchState: researchState };
 
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', boot, false);

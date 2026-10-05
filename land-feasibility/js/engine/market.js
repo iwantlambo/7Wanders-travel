@@ -255,11 +255,18 @@ window.TD = window.TD || {};
     return String(t).replace(/[０-９．]/g, function (c) { return c === '．' ? '.' : String.fromCharCode(c.charCodeAt(0) - 0xFEE0); });
   }
 
+  /* 自動研究（Claude 網路搜尋）寫入的區塊以「# 自動研究」開頭、「# 自動研究結束」結尾；
+     區塊內的每一筆標 auto，收入段據此把信心降為「中」並註明須點開來源核對。*/
   function parseResearch(text) {
-    var lines = String(text || '').split(/\r?\n/), out = [], errors = [], i, raw, parts, kind, k, nums, price, ym, m;
+    var lines = String(text || '').split(/\r?\n/), out = [], errors = [], i, raw, parts, kind, k, nums, price, ym, m, inAuto = false;
     for (i = 0; i < lines.length; i++) {
       raw = toNumZh(lines[i]).replace(/^[\s　]+|[\s　]+$/g, '');
-      if (!raw || raw.charAt(0) === '#') continue;
+      if (raw.charAt(0) === '#') {
+        if (/自動研究結束/.test(raw)) inAuto = false;
+        else if (/自動研究/.test(raw)) inAuto = true;
+        continue;
+      }
+      if (!raw) continue;
       parts = raw.split(/\s*[,，、\t]\s*/);
       kind = null;
       for (k = 0; k < KIND.length; k++) if (KIND[k][0].test(parts[0] || '')) { kind = KIND[k][1]; break; }
@@ -273,7 +280,7 @@ window.TD = window.TD || {};
       out.push({ kind: kind === 'land' ? 'land' : 'price', product: kind === 'land' ? '' : kind,
                  name: parts[1] || '', price: price, lo: nums.length >= 2 ? Number(nums[0]) * (Number(nums[0]) < 10000 ? 1e4 : 1) : price,
                  hi: nums.length >= 2 ? Number(nums[1]) * (Number(nums[1]) < 10000 ? 1e4 : 1) : price,
-                 ym: ym, src: parts.slice(4).join('、'), line: i + 1 });
+                 ym: ym, src: parts.slice(4).join('、'), line: i + 1, auto: inAuto });
     }
     return { items: out, errors: errors };
   }

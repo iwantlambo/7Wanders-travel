@@ -298,10 +298,12 @@ window.TD = window.TD || {};
     return h;
   }
 
-  function riskBlock(ctx, p) {
+  function riskBlock(ctx, p, opts) {
     var h = ownershipRows(ctx, p);
     h += subTitle('法規注意事項');
     h += legalRows(ctx, p);
+    h += subTitle('公開資料查核（自動研究）');
+    h += U().researchChecks ? U().researchChecks(ctx, p, !!(opts && opts.full)) : '';
     h += subTitle('資料複核');
     h += gateRows(ctx, p);
     return h;

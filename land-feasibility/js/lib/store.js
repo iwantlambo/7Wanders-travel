@@ -200,7 +200,7 @@ window.TD = window.TD || {};
         roadWidth: null, roadCount: 1, corner: false, frontageM: null, siteWidth: null, siteDepth: null,
         northZone: 'same', mrtDistanceM: null,
         ownerCount: 1, shareDenomMax: 1, buildingAgeYears: 0, existingFloorM2: 0, hrStatus: 'auto', rezone: 'none',
-        deedText: '', notes: ''
+        deedText: '', certText: '', notes: ''
       },
       m2: { manualFlags: {}, consent: { owners: 0, agreeOwners: 0, shareAgree: 0 }, resolvedNotes: '' },
       m3: { overrides: { bcr: null, far: null }, manualChecks: {}, setbackFrontM: null },
@@ -224,6 +224,8 @@ window.TD = window.TD || {};
         planMonths: null, buildMonths: null, handoverMonths: null, presaleStartMonth: null
       },
       m8: { targetIrr: 0.15, targetMargin: 0.15, scenario: 'base' },
+      /* 自動研究（Claude 網路搜尋）：設定與最近一次結果。API 金鑰不在這裡（只存在瀏覽器）。*/
+      research: { locHint: '', includeNo: false, effort: 'medium', result: null },
       reviews: {},
       overrides: {},
       audit: []
@@ -342,6 +344,7 @@ window.TD = window.TD || {};
     p.parcel.rezone = takeStr(s, 'rezone', 'none');
     if (['none', 'res', 'com'].indexOf(p.parcel.rezone) < 0) p.parcel.rezone = 'none';
     p.parcel.deedText = takeStr(s, 'deedText', '');
+    p.parcel.certText = takeStr(s, 'certText', '');
     p.parcel.notes = takeStr(s, 'notes', '');
 
     s = isObj(src.m2) ? src.m2 : {};
@@ -403,6 +406,13 @@ window.TD = window.TD || {};
     p.m8.targetMargin = takeNum(s, 'targetMargin', 0.15);
     p.m8.scenario = takeStr(s, 'scenario', 'base');
     if (['opt', 'base', 'con'].indexOf(p.m8.scenario) < 0) p.m8.scenario = 'base';
+
+    s = isObj(src.research) ? src.research : {};
+    p.research.locHint = takeStr(s, 'locHint', '');
+    p.research.includeNo = takeBool(s, 'includeNo', false);
+    p.research.effort = takeStr(s, 'effort', 'medium');
+    if (['medium', 'high'].indexOf(p.research.effort) < 0) p.research.effort = 'medium';
+    p.research.result = isObj(s.result) ? plainCopy(s.result, 0) : null;
 
     p.reviews = adoptReviews(src);
     p.overrides = takeNumMap(src, 'overrides');
@@ -477,7 +487,7 @@ window.TD = window.TD || {};
   var DYNAMIC_PATHS = [
     'overrides', 'reviews', 'audit',
     'm2.manualFlags', 'm3.manualChecks', 'm4.pctOverrides', 'm4.picked',
-    'parcel.numbers', 'm6.comps'
+    'parcel.numbers', 'm6.comps', 'research.result'
   ];
 
   function isDynamicPrefix(parts, upto) {

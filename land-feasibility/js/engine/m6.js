@@ -164,10 +164,20 @@ window.TD = window.TD || {};
       var v = list.map(function (x) { return x.price; }).sort(function (a, b) { return a - b; });
       return { n: v.length, p25: v[0], p50: mkt.median(v), p75: v[v.length - 1] };
     }
+    /* 全部來自自動研究（Claude 網路搜尋）時信心為「中」：數字有來源但未經人工核對；有任何一筆是使用者自己輸入的，視為已核對 */
+    function allAuto(list) {
+      var q;
+      if (!list.length) return false;
+      for (q = 0; q < list.length; q++) if (!list[q].auto) return false;
+      return true;
+    }
+    function rLabel(list) {
+      return allAuto(list) ? '自動研究（Claude 網路搜尋 ' + list.length + ' 筆，須點開來源核對）' : '研究行情（使用者輸入 ' + list.length + ' 筆）';
+    }
     if (rLand.length) {
       var rl = rStats(rLand);
-      land = { perPing: rl.p50, p25: rl.p25, p50: rl.p50, p75: rl.p75, n: rl.n, scope: 'research', conf: 'input',
-               label: '研究行情（使用者輸入 ' + rl.n + ' 筆）：' + rLand.map(function (x) { return x.name; }).join('、')
+      land = { perPing: rl.p50, p25: rl.p25, p50: rl.p50, p75: rl.p75, n: rl.n, scope: 'research', conf: allAuto(rLand) ? 'mid' : 'input',
+               label: rLabel(rLand) + '：' + rLand.map(function (x) { return x.name; }).join('、')
                     + (landLvr ? '；實價登錄同區同分區 ' + wan(landLvr.perPing) + '／坪' : ''),
                comps: rLand.map(function (x) { return { ym: x.ym, addr: x.name, areaPing: null, unitPricePing: x.price,
                                                         zoneText: '研究：' + (x.src || '使用者輸入'), district: district }; })
@@ -198,7 +208,7 @@ window.TD = window.TD || {};
       noteP = '使用者指定單價（不含車位）。下方本區實價登錄行情僅供對照。';
     } else if (rPrice.length) {
       method = 'research';
-      conf = 'input';
+      conf = allAuto(rPrice) ? 'mid' : 'input';
       var rp = rStats(rPrice);
       res = { price: rp.p50, lo: Math.min.apply(null, rPrice.map(function (x) { return x.lo; })),
               hi: Math.max.apply(null, rPrice.map(function (x) { return x.hi; })), r2: null, n: rp.n, drivers: [],
@@ -211,9 +221,10 @@ window.TD = window.TD || {};
                                  year: Math.floor(c.ym / 100), ym: c.ym, unitPricePing: c.unitPricePing, areaPing: c.areaPing,
                                  ageYears: 0, floor: c.floor, totalFloors: c.totalFloors, distanceM: null, project: c.project }, {});
               }) : []) };
-      srcPrice = '研究行情（使用者輸入 ' + rp.n + ' 筆）：' + rPrice.map(function (x) { return x.name; }).join('、');
+      srcPrice = rLabel(rPrice) + '：' + rPrice.map(function (x) { return x.name; }).join('、');
       formula = '單價 = 研究行情中位數 ' + wan(rp.p50) + '／坪（' + rPrice.map(function (x) { return x.name + ' ' + wan(x.price); }).join('、') + '）';
-      noteP = '採用你輸入的新案行情（通常比實價登錄中位數新）；本區實價登錄'
+      noteP = (allAuto(rPrice) ? '採用自動研究找到的新案行情（來源與網址見左欄「自動研究」，請點開核對）；本區實價登錄'
+                               : '採用你輸入的新案行情（通常比實價登錄中位數新）；本區實價登錄')
             + (pre ? '同產品預售中位數 ' + wan(pre.point) + '／坪，供對照。' : '查無同產品預售。');
     } else if (source === 'custom') {
       var u = usable(s.comps);

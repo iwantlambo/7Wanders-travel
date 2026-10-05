@@ -1,4 +1,4 @@
-/* tools/smoke.js —— 三十二項斷言。
+/* tools/smoke.js —— 三十八項斷言。
    1～8 是 SPEC 第 9 節的前八項；
    9～11 原本查三個客戶版本的頭條數字與投影片，版本機制已移除，改查
    m8.stress（四項齊全、判定合法）、m8.walkAway（非 NaN 且不高於出價上限）
@@ -10,6 +10,7 @@
    19 報告層必須組得出來且含免責聲明（曾因少傳一個參數整層變白磚）、
    20 渲染後的介面文字不得出現模組代號、NaN，空專案不得以 0 冒充算不出來。
    13～20 都是對抗審查抓到的真實錯誤留下的迴歸防線，不要放寬。
+   33～38 是混合模式（分區證明書優先於內建分區表、自動研究結果的驗證與寫回）的防線。
    21～28 是 2026-10 使用者回報（新北市三重區幸福段、乙種工業區 5 筆 1,618 ㎡）留下的防線：
    比價不得再拿大安區、工業區不得當住宅估、不得預設危老、行政區要能選、
    第二類謄本要能判讀、介面不得出現「待查證」「算不出來」。
@@ -53,7 +54,8 @@ var UI_LOAD = [
   'js/ui/inputs.js',
   'js/ui/results.js',
   'js/ui/details.js',
-  'js/ui/report.js'
+  'js/ui/report.js',
+  'js/ui/research.js'
 ];
 var uiLoaded = false;
 
@@ -155,7 +157,7 @@ if (ctx.errors && ctx.errors.length) {
   console.log('');
 }
 
-console.log('=== smoke：三十二項斷言 ===');
+console.log('=== smoke：三十八項斷言 ===');
 console.log('示範專案：' + p.name);
 
 /* ---- 1. m3.baseFloorM2 為正，且等於面積 × 容積率 ---- */
@@ -790,9 +792,151 @@ check(31, '新北都更二箭：2,000 ㎡ 以上臨 20 m 路加給 10%，未達 
 check(32, '三重區土地行情附大面積舊建物房地交易，含 2025-10 溪尾街一筆、每坪地價 60～75 萬', function () {
   var lm = cCase.m6.market && cCase.m6.market.land, od = lm && lm.oldDeals ? lm.oldDeals : [], i, hit = null;
   for (i = 0; i < od.length; i++) if (od[i].addr === '溪尾街' && od[i].ym === 202510) hit = od[i];
+  /* 每週自動更新行情後，資料期間會往後移；2025-10 移出期間時這筆本來就不在，不算錯 */
+  var meta = TD.data.lvr.meta ? TD.data.lvr.meta('新北市') : null;
+  if (!hit && meta && meta.from > '2025-10') return { ok: true, detail: '資料期間 ' + meta.from + ' 起，已不含 2025-10，略過' };
   if (!hit) return { ok: false, detail: '找不到溪尾街 2025-10 的交易（共 ' + od.length + ' 筆）' };
   if (!(hit.unitPricePing >= 600000 && hit.unitPricePing <= 750000)) return { ok: false, detail: '每坪地價 ' + fmtNum(hit.unitPricePing) };
   return { ok: true, detail: '溪尾街 ' + hit.areaPing + ' 坪、總價 ' + hit.totalWan + ' 萬、每坪 ' + fmtNum(hit.unitPricePing) };
+});
+
+/* ================= 33～38：2026-10-05 混合模式（分區證明書＋自動研究） ================= */
+
+var CERT_NTPC = '新北市政府都市計畫土地使用分區（或公共設施用地）證明書\n'
+  + '土地標示：三重區幸福段 1428、1428-1、1430-2、1430-3、1430-4 地號\n'
+  + '使用分區（或公共設施用地）：乙種工業區\n'
+  + '建蔽率不得大於60％，容積率不得大於210％。\n'
+  + '建築基地面臨計畫道路者，應自道路境界線至少退縮6公尺建築。\n'
+  + '本筆土地位於捷運三重站周邊500公尺範圍內。\n'
+  + '是否位於都市設計審議地區：是';
+
+function checkById(c, id) {
+  var list = (c.m3 && c.m3.checks) || [], i;
+  for (i = 0; i < list.length; i++) if (list[i].id === id) return list[i];
+  return null;
+}
+
+/* ---- 33. 分區證明書優先於內建分區表：使用分區、建蔽、容積、退縮、捷運範圍都改用證明書 ---- */
+check(33, '分區證明書：乙工 60%／210%、退縮 6 m、捷運 500 m 範圍皆採用（信心為輸入），都審列為細部計畫但書注意', function () {
+  var c = TD.engine.run(caseP('住宅區', function (q) { q.parcel.certText = CERT_NTPC; })), bad = [];
+  var site = c.m3.site;
+  if (site.zoneFrom !== 'cert' || site.zone.name !== '乙種工業區') bad.push('分區未依證明書：' + site.zoneFrom + ' ' + (site.zone && site.zone.name));
+  if (site.product !== '廠辦') bad.push('產品 ' + site.product);
+  if (raw(c.m3.bcr) !== 0.6 || c.m3.bcr.conf !== 'input' || !/分區證明書/.test(c.m3.bcr.src)) bad.push('建蔽率 ' + fmtNum(raw(c.m3.bcr)) + ' ' + c.m3.bcr.conf + ' ' + c.m3.bcr.src);
+  if (raw(c.m3.far) !== 2.1 || c.m3.far.conf !== 'input') bad.push('容積率 ' + fmtNum(raw(c.m3.far)) + ' ' + c.m3.far.conf);
+  if (c.m3.setbackFrontM !== 6) bad.push('退縮 ' + c.m3.setbackFrontM);
+  if (site.mrtDistanceM !== 500 || site.mrtFrom !== 'cert') bad.push('捷運距離 ' + site.mrtDistanceM + ' ' + site.mrtFrom);
+  var dp = checkById(c, 'detailPlan');
+  if (!dp || dp.status !== 'warn' || !/都市設計審議/.test(dp.note)) bad.push('細部計畫但書應為注意並列出都審：' + (dp && dp.status));
+  var noCert = TD.engine.run(caseP('住宅區'));
+  if (raw(noCert.m3.far) !== 3.0) bad.push('沒貼證明書時三重住宅區應為 300%，實際 ' + fmtNum(raw(noCert.m3.far)));
+  var ov = TD.engine.run(caseP('住宅區', function (q) { q.parcel.certText = CERT_NTPC; q.m3.overrides.far = 2.4; }));
+  if (raw(ov.m3.far) !== 2.4 || ov.m3.certUse.far !== 'overridden') bad.push('左欄手動輸入應優先於證明書');
+  if (bad.length) return { ok: false, detail: bad.join('；') };
+  return { ok: true, detail: '出價上限每坪 ' + fmtNum(Math.round(raw(c.m8.landCapPerPing))) + '（未貼證明書時以住宅區試算）' };
+});
+
+/* ---- 34. 細部計畫條文一次列多個分區：依分區挑數值，面前道路未達 8 m 時改用窄路容積率 ---- */
+check(34, '細部計畫條文：住宅區取 50%／300%、工業區取 60%／210%；路寬 6 m 時住宅區容積率降為 200%', function () {
+  var plan = '擬定板橋都市計畫細部計畫土地使用分區管制要點\n土地使用分區　建蔽率　容積率\n住宅區　50%　300%\n商業區　70%　460%\n乙種工業區　60%　210%\n'
+           + '建築基地面前道路寬度未達8公尺者，住宅區容積率不得大於200%，商業區容積率不得大於320%。\n'
+           + '住宅區、商業區面臨計畫道路之建築基地，應自道路境界線退縮4公尺建築。\n工業區建築基地應自道路境界線至少退縮6公尺建築。\n回饋比例住宅區40%、商業區44%。';
+  var bad = [];
+  var res = TD.engine.run(caseP('住宅區', function (q) { q.parcel.certText = plan; q.parcel.roadWidth = 12; }));
+  if (raw(res.m3.bcr) !== 0.5 || raw(res.m3.far) !== 3.0) bad.push('住宅區 ' + fmtNum(raw(res.m3.bcr)) + '／' + fmtNum(raw(res.m3.far)));
+  if (res.m3.setbackFrontM !== 4) bad.push('住宅區退縮 ' + res.m3.setbackFrontM);
+  var narrow = TD.engine.run(caseP('住宅區', function (q) { q.parcel.certText = plan; q.parcel.roadWidth = 6; }));
+  if (raw(narrow.m3.far) !== 2.0) bad.push('路寬 6 m 住宅區容積率 ' + fmtNum(raw(narrow.m3.far)));
+  var ind = TD.engine.run(caseP('乙種工業區', function (q) { q.parcel.certText = plan; q.parcel.roadWidth = 12; }));
+  if (raw(ind.m3.bcr) !== 0.6 || raw(ind.m3.far) !== 2.1 || ind.m3.setbackFrontM !== 6) bad.push('工業區 ' + fmtNum(raw(ind.m3.bcr)) + '／' + fmtNum(raw(ind.m3.far)) + ' 退縮 ' + ind.m3.setbackFrontM);
+  var u = TD.engine.certUtil;
+  if (u.zhNum('二百一十') !== 210 || u.zhNum('六十') !== 60 || u.zhNum('三點五') !== 3.5) bad.push('中文數字解析錯誤');
+  var zh = TD.engine.parseCert('使用分區：住宅區\n建蔽率百分之六十，容積率百分之一百八十', {});
+  if (!zh.pick.bcr || zh.pick.bcr.v !== 0.6 || !zh.pick.far || zh.pick.far.v !== 1.8) bad.push('百分之六十／一百八十 未解析');
+  if (bad.length) return { ok: false, detail: bad.join('；') };
+  return { ok: true, detail: '住宅區 50%／300%（窄路 200%）、工業區 60%／210%、退縮 4／6 m' };
+});
+
+/* ---- 35. 公共設施用地：整筆道路用地自基準容積扣除；部分者只能警示 ---- */
+check(35, '證明書標明整筆道路用地的地號自基準容積扣除；「部分」道路用地列為注意', function () {
+  var txt = '使用分區：乙種工業區\n1430-4地號 道路用地\n1430-2地號 部分乙種工業區、部分道路用地\n建蔽率60%，容積率210%';
+  var c = TD.engine.run(caseP('乙種工業區', function (q) { q.parcel.certText = txt; })), bad = [];
+  var want = (1618 - 13) * 2.1;
+  if (Math.abs(raw(c.m3.baseFloorM2) - want) > 1e-6) bad.push('基準容積 ' + fmtNum(raw(c.m3.baseFloorM2)) + '，應為 ' + fmtNum(want));
+  var pl = checkById(c, 'publicLand');
+  if (!pl || pl.status !== 'warn' || !/1430-2/.test(pl.value)) bad.push('公共設施用地檢核：' + (pl && pl.status) + ' ' + (pl && pl.value));
+  var all = TD.engine.run(caseP('乙種工業區', function (q) { q.parcel.certText = '使用分區：道路用地'; }));
+  var zu = checkById(all, 'zoneUse');
+  if (!zu || zu.status !== 'fail') bad.push('整塊道路用地的分區用途應判不通過');
+  if (bad.length) return { ok: false, detail: bad.join('；') };
+  return { ok: true, detail: '扣除 13 ㎡ 後基準容積 ' + fmtNum(Math.round(want)) + ' ㎡' };
+});
+
+/* ---- 36. 證明書的停車標準與高度限制進入量體 ---- */
+check(36, '證明書每 100 ㎡ 設一位停車、高度限制 15 m：法定車位依證明書，樓層數不超過高度限制', function () {
+  var txt = '使用分區：乙種工業區\n建蔽率60%，容積率210%\n停車空間：每100平方公尺設置一部。\n建築物高度不得超過15公尺。';
+  var c = TD.engine.run(caseP('乙種工業區', function (q) { q.parcel.certText = txt; q.parcel.roadWidth = 12; })), bad = [];
+  var vol = raw(c.m5.volFloorM2), legal = c.m5.stallsLegal;
+  if (!(legal === Math.ceil(vol / 100))) bad.push('法定車位 ' + legal + '，應為容積樓地板 ' + fmtNum(vol) + ' ÷ 100 進位');
+  var h = raw(c.m5.heightM);
+  if (!(h <= 15 + 1e-9)) bad.push('高度 ' + fmtNum(h) + ' m 超過 15 m');
+  if (c.m5.heightCheck.status !== 'fail') bad.push('受高度限制縮減量體時應標示：' + c.m5.heightCheck.status);
+  if (bad.length) return { ok: false, detail: bad.join('；') };
+  return { ok: true, detail: '法定車位 ' + legal + ' 位、高度 ' + fmtNum(h) + ' m、可用容積縮為 ' + fmtNum(Math.round(vol)) + ' ㎡' };
+});
+
+/* ---- 37. 自動研究的回傳內容一律當外部資料驗證 ---- */
+check(37, '自動研究結果驗證：不合理價格丟棄、名稱逗號清除、javascript: 網址不收、沒搜尋到的網址標未比對、未列出的查核項目丟棄', function () {
+  var R = TD.research, bad = [];
+  if (!R) return { ok: false, detail: 'TD.research 未載入' };
+  var seen = {};
+  R.collectSeen([{ type: 'web_search_tool_result', content: [{ type: 'web_search_result', url: 'https://news.example.com/a/', title: 't' }] }], seen, []);
+  var n = R.normalize({
+    summary: 's',
+    prices: [{ kind: 'price', product: '住宅', name: 'A, 二期', low: 88, high: 77, ym: '2026-09', source: 'x', url: 'https://news.example.com/a', note: '' },
+             { kind: 'price', product: '住宅', name: 'bad', low: -1, high: 0, ym: '', source: '', url: 'javascript:alert(1)', note: '' },
+             { kind: 'land', product: '土地', name: 'L', low: 70, high: 70, ym: '2025-10', source: 'y', url: 'https://other.example.com/z', note: '' }],
+    facts: [{ field: 'mrtDistanceM', value: '650 公尺', source: 's', url: '', note: '' }, { field: 'roadWidthM', value: 'abc', source: '', url: '', note: '' }],
+    checks: [{ id: 'presale', status: 'differs', found: 'f', source: '', url: 'javascript:x', note: '' }, { id: 'zzz', status: 'match', found: '', source: '', url: '', note: '' }]
+  }, seen, ['presale', 'land']);
+  if (!n.ok) return { ok: false, detail: n.errors.join('；') };
+  var v = n.value;
+  if (v.prices.length !== 2) bad.push('價格應剩 2 筆，實際 ' + v.prices.length);
+  if (v.prices[0].name !== 'A 二期' || v.prices[0].low !== 77 || v.prices[0].high !== 88) bad.push('第一筆 ' + JSON.stringify(v.prices[0]));
+  if (v.prices[0].seen !== true || v.prices[1].seen !== false) bad.push('網址比對錯誤');
+  if (v.facts.length !== 1 || v.facts[0].num !== 650) bad.push('facts ' + JSON.stringify(v.facts));
+  if (v.checks.length !== 1 || v.checks[0].url !== '') bad.push('checks ' + JSON.stringify(v.checks));
+  if (R.normalize({ summary: 1 }, {}, []).ok) bad.push('缺欄位的參數應判為格式不符');
+  var req = R.request({}, { effort: 'high', city: '新北市' });
+  if (req.model !== 'claude-opus-5-5' || req.fallbacks !== 'default' || req.betas[0] !== 'server-side-fallback-2026-07-01') bad.push('模型或備援設定錯誤');
+  if (req.tools[0].type !== 'web_search_20260209' || req.tools[1].type !== 'web_fetch_20260209' || !req.tools[2].strict) bad.push('工具設定錯誤');
+  if (req.output_config.effort !== 'high' || req.tool_choice) bad.push('effort 或 tool_choice 錯誤（此模型不得強制工具）');
+  if (bad.length) return { ok: false, detail: bad.join('；') };
+  return { ok: true, detail: '價格 2 筆、facts 1 筆、checks 1 筆，請求設定正確' };
+});
+
+/* ---- 38. 自動研究寫回：研究行情整段替換且保留使用者自己的行；收入段信心為中；只填空白欄位 ---- */
+check(38, '自動研究寫回研究行情：使用者行保留、重跑整段替換、單價與土地行情改用研究值且信心為中；只填空白的捷運距離', function () {
+  var R = TD.research, bad = [];
+  var res = { prices: [{ kind: 'price', product: '廠辦', name: '新案X', low: 50, high: 60, ym: '2026-08', source: '報導', url: 'https://a.example.com/1' },
+                       { kind: 'land', product: '土地', name: '舊廠Y', low: 72, high: 72, ym: '2025-12', source: '新聞', url: '' }],
+              facts: [{ field: 'mrtDistanceM', num: 650, value: '650' }, { field: 'roadWidthM', num: 15, value: '15' }] };
+  var mine = '住宅, 我的案, 80, 2026-09, 自己查';
+  var t1 = R.mergeText(mine, R.autoBlock(res, '2026-10-05'));
+  var t2 = R.mergeText(t1, R.autoBlock({ prices: [res.prices[0]] }, '2026-10-06'));
+  if (t2.indexOf(mine) !== 0) bad.push('使用者自己的行不見了');
+  if ((t2.match(/# 自動研究 /g) || []).length !== 1 || /舊廠Y/.test(t2)) bad.push('重跑應整段替換：' + t2);
+  if (R.stripAuto(t1) !== mine) bad.push('移除後應只剩使用者的行');
+  var c = TD.engine.run(caseP('乙種工業區', function (q) { q.m6.researchText = t1; q.parcel.roadWidth = 12; }));
+  if (c.m6.method !== 'research' || raw(c.m6.unitPricePing) !== 550000 || c.m6.unitPricePing.conf !== 'mid') bad.push('單價 ' + fmtNum(raw(c.m6.unitPricePing)) + ' ' + c.m6.unitPricePing.conf);
+  if (!c.m6.market.land || c.m6.market.land.perPing !== 720000 || c.m6.market.land.conf !== 'mid') bad.push('土地行情 ' + JSON.stringify(c.m6.market.land && [c.m6.market.land.perPing, c.m6.market.land.conf]));
+  var mixed = TD.engine.run(caseP('乙種工業區', function (q) { q.m6.researchText = '廠辦, 自己查的案, 58, 2026-09, 代銷\n' + R.autoBlock(res, 'x'); }));
+  if (mixed.m6.unitPricePing.conf !== 'input') bad.push('有使用者自己輸入的行時信心應為輸入');
+  var q2 = caseP('乙種工業區', function (q) { q.parcel.roadWidth = 12; });
+  var fa = R.factsToApply(res, q2);
+  if (fa.length !== 1 || fa[0].path !== 'parcel.mrtDistanceM' || fa[0].value !== 650) bad.push('只應填空白的捷運距離：' + JSON.stringify(fa));
+  if (bad.length) return { ok: false, detail: bad.join('；') };
+  return { ok: true, detail: '研究單價 55 萬、土地 72 萬（信心中），已填捷運距離 650 m' };
 });
 
 /* ================================================================= */

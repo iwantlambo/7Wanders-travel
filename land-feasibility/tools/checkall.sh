@@ -14,9 +14,11 @@ step() { printf '\n=== %s ===\n' "$1"; }
 bad()  { printf 'FAIL  %s\n' "$1"; FAIL=1; }
 ok()   { printf 'PASS  %s\n' "$1"; }
 
-# 掃描範圍：專案內所有 .js（含 tools/），排除 docs 與版本控制目錄
+# 掃描範圍：專案內所有 .js（含 tools/），排除 docs 與版本控制目錄。
+# js/vendor/ 是第三方官方套件的打包檔（自動研究用的 Anthropic SDK），不是本專案寫的程式，
+# 不套 ES5 與離線規則；它只能由 js/lib/research.js 延遲載入，另由第 4c 項把關。
 JSFILES=$(find . -type f -name '*.js' \
-  ! -path './.git/*' ! -path './node_modules/*' ! -path './docs/*' \
+  ! -path './.git/*' ! -path './node_modules/*' ! -path './docs/*' ! -path './js/vendor/*' \
   | LC_ALL=C sort)
 
 if [ -z "$JSFILES" ]; then
@@ -132,6 +134,26 @@ if grep -nE '(script|link)[^>]*(src|href)[[:space:]]*=[[:space:]]*"[[:space:]]*(
 else
   ok "index.html 沒有外部 script／link"
 fi
+
+# ---------------------------------------------------------------- 4c. 自動研究是唯一會連網的功能
+# 預設零網路請求：index.html 不得載入 SDK；SDK 只能由 js/lib/research.js 在使用者按下「開始研究」時延遲載入，
+# 而且必須是同資料夾內的靜態檔（不是外部 CDN）。
+step "4c. 連網只限使用者啟動的自動研究：SDK 不得出現在 index.html，只能由 js/lib/research.js 延遲載入"
+VENDOR=js/vendor/anthropic-sdk.js
+if [ -f "$VENDOR" ]; then ok "$VENDOR 存在"; else bad "缺少 $VENDOR（執行 sh tools/build_sdk.sh 產生）"; fi
+if [ -f "$VENDOR" ] && node --check "$VENDOR" >/dev/null 2>&1; then ok "$VENDOR 語法正確"; else bad "$VENDOR 語法檢查失敗"; fi
+if grep -q 'js/vendor/' index.html; then bad "index.html 直接載入了 js/vendor/ 的檔案（應由 research.js 延遲載入）"; else ok "index.html 沒有直接載入 SDK"; fi
+if grep -q "'js/vendor/anthropic-sdk.js'" js/lib/research.js; then ok "research.js 延遲載入同資料夾的 SDK"; else bad "research.js 沒有延遲載入 js/vendor/anthropic-sdk.js"; fi
+VHIT=0
+for f in $JSFILES; do
+  case "$f" in ./js/lib/research.js) continue ;; esac
+  if grep -n 'js/vendor/' "$f" >/dev/null 2>&1; then VHIT=1; grep -n 'js/vendor/' "$f" | sed "s|^|      $f:|"; fi
+done
+if [ "$VHIT" -eq 1 ]; then bad "research.js 以外的檔案引用了 js/vendor/"; else ok "只有 research.js 引用 SDK"; fi
+for f in js/vendor/*; do
+  [ -f "$f" ] || continue
+  if [ "$f" != "$VENDOR" ]; then bad "js/vendor/ 只允許 anthropic-sdk.js，多了 $f"; fi
+done
 
 # ---------------------------------------------------------------- 5. ES5 風格
 # SPEC 第 1 節第 6 款：只用 var / function，字串一律用 + 串接。

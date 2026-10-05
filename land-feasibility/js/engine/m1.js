@@ -714,7 +714,8 @@ window.TD = window.TD || {};
 
     /* ---- 分區與基地情境（各段共用，見 js/engine/site.js） ---- */
     var site = TD.engine.siteOf ? TD.engine.siteOf(p) : null;
-    var city = trim(pc.city), district = trim(pc.district), zoneCode = trim(pc.zone), zoneName = '';
+    var city = trim(pc.city), district = trim(pc.district), zoneName = '';
+    var zoneCode = (site && site.zoneInput) ? site.zoneInput : trim(pc.zone);   /* 有分區證明書時為證明書上的分區 */
     var zoneSrc = '', zoneArticle = '';
     if (site && site.zone) {
       zoneName = str(site.zone.name);

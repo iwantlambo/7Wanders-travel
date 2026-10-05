@@ -33,6 +33,17 @@ window.TD = window.TD || {};
     return { v: v, input: true };
   }
 
+  /* 分區證明書的高度或層數上限（沒有時回 null）*/
+  function hCapOf(site, floorH) {
+    var h = null, hf;
+    if (site && isNum(site.heightLimitM) && site.heightLimitM > 0) h = site.heightLimitM;
+    if (site && isNum(site.floorLimit) && site.floorLimit > 0) {
+      hf = site.floorLimit * floorH + 1.5;
+      if (h === null || hf < h) h = hf;
+    }
+    return h;
+  }
+
   function m5(p, ctx) {
     p = p || {};
     ctx = ctx || {};
@@ -84,12 +95,19 @@ window.TD = window.TD || {};
     /* ---- 停車：法定（第59條）與銷售需要（每戶配車位）取大 ---- */
     var pk = TD.data.zoning && TD.data.zoning.parking59;
     var cat = pk ? pk.cat[prm.parkingCat || '2'] : null;
-    var stallsLegal = (cat && volFloorM2 > 0) ? Math.max(0, Math.ceil((volFloorM2 - cat.exemptM2) / cat.perM2)) : 0;
+    /* 法定車位：細部計畫（分區證明書）另有停車標準者從其規定，否則依建技規則第59條 */
+    var pRule = site.parkingRule || null;
+    function legalStalls(volM2, units) {
+      var c = (pRule && TD.engine.certParking) ? TD.engine.certParking(pRule, volM2, units) : null;
+      if (c !== null) return c;
+      return (cat && volM2 > 0) ? Math.max(0, Math.ceil((volM2 - cat.exemptM2) / cat.perM2)) : 0;
+    }
+    var stallsLegal = legalStalls(volFloorM2, unitsCount);
     var stallsMarket = Math.ceil(unitsCount * stallRatio);
     var stalls = Math.max(stallsLegal, stallsMarket);
 
     /* ---- 地下室：每位車位樓地板（含車道、坡道與機房分攤）× 車位數；開挖面積以建蔽率＋10% 為原則 ---- */
-    var excavRatio = Math.min(0.8, (isNum(bcr) ? bcr : 0.6) + 0.1);
+    var excavRatio = isNum(site.excavRatio) ? site.excavRatio : Math.min(0.8, (isNum(bcr) ? bcr : 0.6) + 0.1);
     var perLevelM2 = siteM2 * excavRatio;
     var basementM2 = 0, basementLevels = 0;
     if (prm.basement !== false && stalls > 0) {
@@ -103,7 +121,7 @@ window.TD = window.TD || {};
     var Lf = site.frontageM > 0 ? site.frontageM : sw;
     var fit = (TD.engine.heightFit && plateMax > 0 && sw > 0 && sd > 0 && grossFloorM2 > 0)
       ? TD.engine.heightFit({ Sw: site.roadWidth, Dfront: sb, W: sw, Dsite: sd, L: Lf, plateMax: plateMax,
-                              gross: grossFloorM2, floorH: floorH, groundExtra: 1.5 }) : null;
+                              gross: grossFloorM2, floorH: floorH, groundExtra: 1.5, hMax: hCapOf(site, floorH) }) : null;
     var plate = plateMax, floorsAbove = plateMax > 0 ? Math.ceil(grossFloorM2 / plateMax) : null;
     var hStatus = 'pass', hNote = '', capped = false, cfg = null;
     if (fit && fit.fit) {
@@ -116,13 +134,13 @@ window.TD = window.TD || {};
     } else if (fit && !fit.fit && fit.best && fit.best.usable > 0) {
       hStatus = 'fail';
       var ub = fit.best, ratio = Math.min(1, ub.usable / grossFloorM2);
-      hNote = '高度比（第164條）：面前道路 ' + f(site.roadWidth, 1) + ' m，基地內任何配置最多約 ' + ub.floors + ' 層（'
-            + f(ub.H, 1) + ' m），只能用到約 ' + fp(ratio, 0) + ' 的容積，已依此縮減量體。合併臨接較寬道路之鄰地、'
-            + '加大退縮或降低樓層高度可改善。';
+      hNote = (hCapOf(site, floorH) ? '高度比（第164條）與分區證明書高度限制' : '高度比（第164條）') + '：面前道路 ' + f(site.roadWidth, 1)
+            + ' m，基地內任何配置最多約 ' + ub.floors + ' 層（' + f(ub.H, 1) + ' m），只能用到約 ' + fp(ratio, 0) + ' 的容積，已依此縮減量體。'
+            + (hCapOf(site, floorH) ? '高度上限來自分區證明書，請確認是否另有放寬規定。' : '合併臨接較寬道路之鄰地、加大退縮或降低樓層高度可改善。');
       volFloorM2 *= ratio; exemptFloorM2 *= ratio; grossFloorM2 *= ratio;
       sellablePing *= ratio; mainPing *= ratio;
       unitsCount = (sellablePing > 0 && avgUnitPing > 0) ? Math.max(1, Math.floor(sellablePing / avgUnitPing)) : 0;
-      stallsLegal = (cat && volFloorM2 > 0) ? Math.max(0, Math.ceil((volFloorM2 - cat.exemptM2) / cat.perM2)) : 0;
+      stallsLegal = legalStalls(volFloorM2, unitsCount);
       stallsMarket = Math.ceil(unitsCount * stallRatio);
       stalls = Math.max(stallsLegal, stallsMarket);
       if (prm.basement !== false && stalls > 0) {
@@ -173,7 +191,7 @@ window.TD = window.TD || {};
         '營建成本以此面積（地上）與地下室面積分別計價。'),
 
       basementM2: TD.V('m5.basementM2', basementM2, C,
-        '車位數 × 每位地下室樓地板；開挖面積以法定建蔽率加 10% 為原則',
+        '車位數 × 每位地下室樓地板；開挖面積' + (isNum(site.excavRatio) ? '依分區證明書開挖率' : '以法定建蔽率加 10% 為原則'),
         prm.basement === false ? site.product + '不設地下室（車位設於一樓）'
           : '地下室 = 車位 ' + f(stalls, 0) + ' 位 × ' + f(perStallP.v, 0) + ' ㎡（含車道、坡道與機房分攤）→ '
             + basementLevels + ' 層（每層可開挖約 ' + f(perLevelM2, 0) + ' ㎡ ＝ 基地 × ' + fp(excavRatio, 0) + '）',
@@ -195,9 +213,10 @@ window.TD = window.TD || {};
         '戶數 = 可售坪 ' + f(sellablePing, 1) + ' ÷ 每戶 ' + f(avgUnitPing, 1) + ' 坪（無條件捨去）',
         '戶數決定銷售車位數與去化月數。'),
 
-      stalls: TD.V('m5.stalls', stalls, C, BT + '第59條；' + stallRatioFrom,
+      stalls: TD.V('m5.stalls', stalls, C, (pRule ? '分區證明書停車標準' : BT + '第59條') + '；' + stallRatioFrom,
         '車位 = max（法定 ' + f(stallsLegal, 0) + ' 位, 戶數 ' + f(unitsCount, 0) + ' × ' + f(stallRatio, 2) + ' ＝ ' + f(stallsMarket, 0) + ' 位）',
-        (cat ? '法定：' + cat.label + '，容積樓地板 ' + f(volFloorM2, 0) + ' ㎡ 扣除 ' + cat.exemptM2 + ' ㎡ 後每 ' + cat.perM2 + ' ㎡ 一位，零數設一位。' : '')
+        (pRule ? '法定：依分區證明書停車標準（' + String(pRule.text || '').slice(0, 50) + '）。'
+          : (cat ? '法定：' + cat.label + '，容積樓地板 ' + f(volFloorM2, 0) + ' ㎡ 扣除 ' + cat.exemptM2 + ' ㎡ 後每 ' + cat.perM2 + ' ㎡ 一位，零數設一位。' : ''))
         + '銷售需要以本區預售成交中附車位的比例推估。細部計畫另有較嚴規定者從其規定。'),
 
       floorsAbove: TD.V('m5.floorsAbove', floorsAbove, assumedConf, '地上總樓地板 ÷ 標準層面積',

@@ -28,6 +28,8 @@ window.TD = window.TD || {};
     sunlight: '日照',
     fireGap: '防火間隔',
     parking: '停車',
+    minSite: '最小開發規模',
+    publicLand: '公共設施用地',
     detailPlan: '細部計畫但書'
   };
 
@@ -101,14 +103,16 @@ window.TD = window.TD || {};
         if (depth > o.Dsite - o.Dfront + 1e-9) continue;
         D = Math.max(o.Dfront, o.Dsite - depth);
         H = hMax164(o.Sw, D, o.L > 0 ? o.L : o.W, B);
+        if (o.hMax > 0) H = Math.min(H, o.hMax);      /* 細部計畫或證明書另訂的高度上限 */
         nMax = Math.max(0, Math.floor((H - o.groundExtra) / o.floorH));
         n = Math.ceil(o.gross / P);
         if (nMax * P > best.usable) best = { usable: nMax * P, plate: P, B: B, D: D, H: H, floors: nMax };
         if (n <= nMax) { first = { plate: P, B: B, D: D, H: H, floors: n, plateRatio: plates[i], widthRatio: widths[j] }; break; }
       }
     }
-    return { fit: !!first, cfg: first, best: best,
-             hFront: hMax164(o.Sw, o.Dfront, o.L > 0 ? o.L : o.W, Math.min(o.W, o.L > 0 ? o.L : o.W)) };
+    var hFront = hMax164(o.Sw, o.Dfront, o.L > 0 ? o.L : o.W, Math.min(o.W, o.L > 0 ? o.L : o.W));
+    if (o.hMax > 0 && hFront !== null) hFront = Math.min(hFront, o.hMax);
+    return { fit: !!first, cfg: first, best: best, hFront: hFront };
   }
 
   /* ---------------- 主函式 ---------------- */
@@ -128,16 +132,33 @@ window.TD = window.TD || {};
     if (!site) site = { city: '', district: '', zone: null, assumed: [], siteM2: 0, roadWidth: 8, params: {} };
     var z = site.zone;
     var city = site.city, zoneCode = site.zoneInput;
+    var cert = site.cert || null, cp = site.certPick || {};
+    var CU = TD.engine.certUtil;
+    function certSrc(it) { return '土地使用分區證明書' + (it && it.line ? '（貼上文字第 ' + it.line + ' 行）' : ''); }
+    function certRaw(it) { return it && it.raw ? '原文：「' + String(it.raw).slice(0, 80) + '」' : ''; }
     var cityData = (TD.data && TD.data.zoning && TD.data.zoning.cities && hasOwn(TD.data.zoning.cities, city))
       ? TD.data.zoning.cities[city] : null;
 
     if (!cityData) notes.push('查無「' + (city || '（未填縣市）') + '」的分區資料，請先選擇縣市。');
+    if (site.zoneFrom === 'cert' && site.zoneSelected && CU && CU.zoneMatch(site.zoneSelected, cert.zone) < 2) {
+      notes.push('使用分區依分區證明書為「' + cert.zone + '」，左欄下拉選的「' + site.zoneSelected + '」不採用。');
+    }
+    if (cert && cert.city && city && cert.city !== city) {
+      notes.push('分區證明書是' + cert.city + '核發，與左欄縣市「' + city + '」不同，請確認貼的是本案地號的證明書。');
+    }
     else if (!z) notes.push('分區「' + (zoneCode || '（未填）') + '」不在' + city + '的分區表內，請改選清單中的分區，或直接輸入建蔽率與容積率。');
 
     /* ---- 面積 ---- */
     var areaM2 = null, areaSrc = '';
     if (ctx.m1 && isNum(TD.raw(ctx.m1.areaM2)) && TD.raw(ctx.m1.areaM2) > 0) { areaM2 = TD.raw(ctx.m1.areaM2); areaSrc = '地號面積合計'; }
     else if (site.siteM2 > 0) { areaM2 = site.siteM2; areaSrc = '地號面積合計'; }
+    var pl = site.publicLand || { whole: [], partial: [], wholeM2: 0, missing: [] };
+    if (pl.wholeM2 > 0 && isNum(areaM2) && areaM2 > 0) {
+      areaM2 = Math.max(0, areaM2 - pl.wholeM2);
+      areaSrc = '地號面積合計扣除公共設施用地 ' + n(pl.wholeM2, 2) + ' ㎡（' + pl.whole.map(function (x) { return x.no + ' ' + x.zone; }).join('、') + '）';
+      notes.push('分區證明書所載整筆為公共設施用地的地號（' + pl.whole.map(function (x) { return x.no; }).join('、')
+               + '）不得建築，面積已自基準容積扣除；購地成本仍以全部面積計。');
+    }
     if (site.rezone && isNum(areaM2) && areaM2 > 0) {
       notes.push(site.rezone.note);
       areaM2 = areaM2 * (1 - site.rezone.ratio);
@@ -153,10 +174,22 @@ window.TD = window.TD || {};
     var zConf = z ? (z.conf || 'mid') : 'mid';
     var bcrV, farV, bcrIsInput = false, farIsInput = false;
 
+    var cBcr = (cp.bcr && isNum(cp.bcr.v)) ? cp.bcr : null;
+    var cFar = (cp.far && isNum(cp.far.v)) ? cp.far : null;
+    var certUse = { zone: site.zoneFrom === 'cert', bcr: '', far: '', setback: '', height: '', parking: '', excav: '', mrt: '' };
+
     if (isNum(ov.bcr)) {
       bcrIsInput = true;
       bcrV = TD.V('m3.bcr', ov.bcr, 'input', '使用者輸入（依土地使用分區證明書）', '建蔽率 = 使用者輸入',
-                  '已覆蓋分區表數值' + (z && isNum(z.bcr) ? '（分區表 ' + pctStr(z.bcr) + '）' : '') + '。');
+                  '已覆蓋分區表數值' + (z && isNum(z.bcr) ? '（分區表 ' + pctStr(z.bcr) + '）' : '') + '。'
+                + (cBcr && Math.abs(cBcr.v - ov.bcr) > 1e-9 ? '貼上的分區證明書為 ' + pctStr(cBcr.v) + '，以左欄輸入為準。' : ''));
+      if (cBcr) certUse.bcr = 'overridden';
+    } else if (cBcr) {
+      bcrIsInput = true;
+      certUse.bcr = 'used';
+      bcrV = TD.V('m3.bcr', cBcr.v, 'input', certSrc(cBcr), '建蔽率 = 分區證明書所載 ' + pctStr(cBcr.v),
+                  (z && isNum(z.bcr) && Math.abs(z.bcr - cBcr.v) > 1e-9 ? '內建分區表為 ' + pctStr(z.bcr) + '，以證明書為準。'
+                    : '與內建分區表一致。') + certRaw(cBcr));
     } else if (z && isNum(z.bcr)) {
       bcrV = TD.V('m3.bcr', z.bcr, zConf, zSrc, '建蔽率 = ' + city + '「' + z.name + '」', z.note);
     } else {
@@ -164,10 +197,25 @@ window.TD = window.TD || {};
                   '本分區沒有通案建蔽率，請依土地使用分區證明書於左側輸入。');
     }
 
+    var nr = cp.narrow || null;
+    var narrowHit = !!(nr && isNum(nr.roadLt) && isNum(nr.far) && site.roadWidthInput && site.roadWidthInput < nr.roadLt);
     if (isNum(ov.far)) {
       farIsInput = true;
       farV = TD.V('m3.far', ov.far, 'input', '使用者輸入（依土地使用分區證明書）', '容積率 = 使用者輸入',
-                  '已覆蓋分區表數值' + (z && isNum(z.far) ? '（分區表 ' + pctStr(z.far) + '）' : '') + '。');
+                  '已覆蓋分區表數值' + (z && isNum(z.far) ? '（分區表 ' + pctStr(z.far) + '）' : '') + '。'
+                + (cFar && Math.abs(cFar.v - ov.far) > 1e-9 ? '貼上的分區證明書為 ' + pctStr(cFar.v) + '，以左欄輸入為準。' : ''));
+      if (cFar) certUse.far = 'overridden';
+    } else if (cFar || (narrowHit && z && isNum(z.far))) {
+      farIsInput = true;
+      certUse.far = 'used';
+      var farUse = cFar ? cFar.v : z.far, farWhy = cFar ? '分區證明書所載 ' + pctStr(cFar.v) : city + '「' + z.name + '」' + pctStr(z.far);
+      if (narrowHit && nr.far < farUse) {
+        farUse = nr.far;
+        farWhy += '；面前道路 ' + n(site.roadWidthInput, 1) + ' m 未達 ' + nr.roadLt + ' m，依證明書降為 ' + pctStr(nr.far);
+      }
+      farV = TD.V('m3.far', farUse, 'input', certSrc(narrowHit ? nr : cFar), '容積率 = ' + farWhy,
+                  (cFar && z && isNum(z.far) && Math.abs(z.far - cFar.v) > 1e-9 ? '內建分區表為 ' + pctStr(z.far) + '，以證明書為準。'
+                    : (cFar ? '與內建分區表一致。' : '')) + certRaw(narrowHit ? nr : cFar));
     } else if (z && isNum(z.far)) {
       farV = TD.V('m3.far', z.far, zConf, zSrc,
                   '容積率 = ' + city + '「' + z.name + '」' + (z.farReason ? '（' + z.farReason + '）' : ''), z.note);
@@ -183,17 +231,17 @@ window.TD = window.TD || {};
     var baseFloorM2 = (isNum(areaM2) && isNum(far)) ? areaM2 * far : null;
 
     var buildAreaV = TD.V('m3.buildAreaM2', buildAreaM2, bcrIsInput ? 'input' : zConf,
-                          bcrIsInput ? '使用者輸入之建蔽率 × 基地面積' : zSrc,
+                          bcrIsInput ? (certUse.bcr === 'used' ? '分區證明書之建蔽率 × 基地面積' : '使用者輸入之建蔽率 × 基地面積') : zSrc,
                           '建築面積上限 = 基地面積 ' + n(areaM2, 2) + ' ㎡ × 建蔽率 ' + (isNum(bcr) ? pctStr(bcr) : '—'),
                           '法定上限；退縮、法定空地位置與車道出入口會讓實際配置略小，見本表「退縮」。');
     var baseFloorV = TD.V('m3.baseFloorM2', baseFloorM2, farIsInput ? 'input' : zConf,
-                          farIsInput ? '使用者輸入之容積率 × 基地面積' : zSrc,
+                          farIsInput ? (certUse.far === 'used' ? '分區證明書之容積率 × 基地面積' : '使用者輸入之容積率 × 基地面積') : zSrc,
                           '基準容積樓地板 = 基地面積 ' + n(areaM2, 2) + ' ㎡ × 容積率 ' + (isNum(far) ? pctStr(far) : '—'),
                           '約 ' + (isNum(baseFloorM2) ? n(pingOf(baseFloorM2), 1) + ' 坪' : '—')
                         + '；不含容積獎勵與免計容積。');
 
     var assumedNote = site.assumed && site.assumed.length ? '（' + site.assumed.join('；') + '）' : '';
-    var roadConf = site.roadWidthInput ? 'high' : 'low';
+    var roadConf = site.roadWidthInput ? (site.roadFromResearch ? 'mid' : 'high') : 'low';
     var shapeConf = site.shapeAssumed ? 'low' : 'high';
     var prm = site.params || {};
     var floorH = isNum(prm.floorHeightM) ? prm.floorHeightM : 3.3;
@@ -244,7 +292,8 @@ window.TD = window.TD || {};
     var rw = site.roadWidth;
     var roadLaw = '建築法第42條、第48條；' + BT + '第1條第36款（道路之定義）';
     var roadNote = '路寬決定容積率級距（新北市細部計畫：未達 8 公尺者住宅區 200%、商業區 320%）、高度比與車道出入口，'
-                 + '以都市計畫道路寬度或指定建築線圖為準。' + (site.roadWidthInput ? '' : assumedNote);
+                 + '以都市計畫道路寬度或指定建築線圖為準。' + (site.roadWidthInput ? '' : assumedNote)
+                 + (site.roadFromResearch ? '路寬由自動研究依公開資料填入，請以指定建築線圖確認。' : '');
     if (rw >= 8) {
       checks.push(mk('roadWidth', 'pass', '面前道路 ' + n(rw, 1) + ' m' + (site.roadCount >= 2 ? '（' + site.roadCount + ' 面臨路）' : ''),
         '臨接計畫道路並與建築線相連接；8 公尺以上不受窄路容積折減', roadLaw, roadNote, roadConf, rw));
@@ -259,8 +308,11 @@ window.TD = window.TD || {};
 
     /* ================= 4. 退縮（細部計畫土管要點；建築法第48條但書） ================= */
     var sbCity = cityData && cityData.setback ? cityData.setback : { frontM: 0, note: '' };
-    var sbFront = isNum(cfg.setbackFrontM) && cfg.setbackFrontM >= 0 ? cfg.setbackFrontM : (isNum(sbCity.frontM) ? sbCity.frontM : 0);
+    var sbCert = (cp.setbackFrontM && isNum(cp.setbackFrontM.v)) ? cp.setbackFrontM : null;
     var sbIsInput = isNum(cfg.setbackFrontM) && cfg.setbackFrontM >= 0;
+    var sbFront = sbIsInput ? cfg.setbackFrontM : (sbCert ? sbCert.v : (isNum(sbCity.frontM) ? sbCity.frontM : 0));
+    var sbFrom = sbIsInput ? '使用者輸入' : (sbCert ? '分區證明書' : '預設');
+    if (sbCert) certUse.setback = sbIsInput ? 'overridden' : 'used';
     var sbLaw = '建築法第48條（都市細部計畫規定須退縮建築時從其規定）；' + city + '各該細部計畫土地使用分區管制要點';
     var depthAvail = (sd > 0) ? sd - sbFront : null;
     var footNeed = buildAreaM2;
@@ -268,13 +320,14 @@ window.TD = window.TD || {};
     if (isNum(footNeed) && isNum(footCap)) {
       var fits = footCap >= footNeed * 0.999;
       checks.push(mk('setback', fits ? 'pass' : 'warn',
-        '臨路退縮 ' + n(sbFront, 1) + ' m（' + (sbIsInput ? '使用者輸入' : '預設') + '）',
+        '臨路退縮 ' + n(sbFront, 1) + ' m（' + sbFrom + '）',
         '退縮後可建範圍 ' + n(footCap, 0) + ' ㎡ ' + (fits ? '≥' : '<') + ' 建蔽率面積 ' + n(footNeed, 0) + ' ㎡',
         sbLaw,
         (fits ? '退縮後仍容得下法定建築面積，量體不受影響；退縮部分多可計入法定空地。'
               : '退縮後放不下全部建築面積，每層面積須縮小、層數增加（量體段會依此估算）。')
-        + (sbCity.note || '') + (site.shapeAssumed ? '基地寬深為推估值。' : ''),
-        sbIsInput ? 'input' : 'mid', sbFront));
+        + (sbCert && !sbIsInput ? '退縮依分區證明書（第 ' + sbCert.line + ' 行）。' : (sbCity.note || ''))
+        + (site.shapeAssumed ? '基地寬深為推估值。' : ''),
+        (sbIsInput || sbCert) ? 'input' : 'mid', sbFront));
     } else {
       checks.push(mk('setback', 'warn', '臨路退縮 ' + n(sbFront, 1) + ' m', '依細部計畫退縮規定', sbLaw,
         '缺基地面積或建蔽率，無法檢核退縮後的可建範圍。' + (sbCity.note || ''), 'low', sbFront));
@@ -283,11 +336,19 @@ window.TD = window.TD || {};
     /* ================= 5. 高度比（建技規則第164條，實施容積管制地區） ================= */
     var hLaw = BT + '第164條（實施容積管制地區，第166條排除第14條之高度限制）';
     var Lf = site.frontageM > 0 ? site.frontageM : sw;
+    var hCap = null, hCapWhy = '';
+    if (isNum(site.heightLimitM) && site.heightLimitM > 0) { hCap = site.heightLimitM; hCapWhy = '分區證明書高度限制 ' + n(hCap, 1) + ' m'; }
+    if (isNum(site.floorLimit) && site.floorLimit > 0) {
+      var hF = site.floorLimit * floorH + 1.5;
+      if (hCap === null || hF < hCap) { hCap = hF; hCapWhy = '分區證明書層數限制 ' + site.floorLimit + ' 層（約 ' + n(hF, 1) + ' m）'; }
+    }
+    if (hCap !== null) { certUse.height = 'used'; hLaw += '；' + hCapWhy; }
     var hBlock = hMax164(rw, sbFront, Lf, Lf);
     var hTower = hMax164(rw, sbFront, Lf, Lf * 0.6);
     var fitBase = (isNum(baseFloorM2) && isNum(buildAreaM2)) ? heightFit({
       Sw: rw, Dfront: sbFront, W: sw, Dsite: sd, L: Lf, plateMax: buildAreaM2,
-      gross: baseFloorM2 * (1 + (isNum(prm.exemptRatio) ? prm.exemptRatio : 0.22)), floorH: floorH, groundExtra: 1.5
+      gross: baseFloorM2 * (1 + (isNum(prm.exemptRatio) ? prm.exemptRatio : 0.22)), floorH: floorH, groundExtra: 1.5,
+      hMax: hCap
     }) : null;
     var hRear = (fitBase && fitBase.best && isNum(fitBase.best.H)) ? fitBase.best.H : null;
     if (!isNum(hBlock)) {
@@ -297,7 +358,7 @@ window.TD = window.TD || {};
         ? '約 ' + n(fitBase.cfg.floors * floorH + 1.5, 1) + ' m ≤ 容許 ' + n(fitBase.cfg.H, 1) + ' m'
         : '臨路整排容許 ' + n(hBlock, 1) + ' m';
       var hReq = '§164：各部分高度 H ≤ 3.6 ×（面前道路寬 Sw ＋ 該部分至建築線距離 D），且 3.6：1 斜率陰影面積 ≤ 臨路長 L × Sw ÷ 2'
-               + '（Sw ' + n(rw, 1) + ' m、L ' + n(Lf, 1) + ' m）';
+               + '（Sw ' + n(rw, 1) + ' m、L ' + n(Lf, 1) + ' m）' + (hCap !== null ? '；另受' + hCapWhy : '');
       var hNote2;
       if (!fitBase) {
         checks.push(mk('heightRatio', 'warn', hv, hReq, hLaw, '缺基地面積或建蔽率，無法試排配置。', 'low', hBlock));
@@ -355,7 +416,18 @@ window.TD = window.TD || {};
     var catId = prm.parkingCat || '2';
     var cat = pk && pk.cat ? pk.cat[catId] : null;
     var parkLaw = BT + '第59條（都市計畫內區域）；都市計畫書另有規定者從其規定';
-    if (!cat || !isNum(baseFloorM2)) {
+    var pRule = site.parkingRule || null;
+    if (pRule && isNum(baseFloorM2)) {
+      certUse.parking = 'used';
+      var pStalls = TD.engine.certParking ? TD.engine.certParking(pRule, baseFloorM2, null) : null;
+      var pTxt = (isNum(pRule.perUnit) ? '每戶 ' + pRule.perUnit + ' 位' : '')
+               + (isNum(pRule.perM2) ? (isNum(pRule.perUnit) ? '；' : '') + (pRule.exemptM2 ? pRule.exemptM2 + ' ㎡ 以下' + (pRule.first ? '設 1 位' : '免設') + '、超過部分' : '')
+                  + '每 ' + pRule.perM2 + ' ㎡ 設 1 位' : '');
+      checks.push(mk('parking', 'pass', isNum(pStalls) ? '以基準容積計，依細部計畫應設 ' + n(pStalls, 0) + ' 位' : '依細部計畫停車標準（以戶數計）',
+        '細部計畫停車標準：' + pTxt, '分區證明書／細部計畫土地使用分區管制要點（' + parkLaw + '）',
+        '證明書第 ' + pRule.line + ' 行：「' + String(pRule.text || '').slice(0, 60) + '」。細部計畫另有規定者從其規定，量體段以此計算法定車位，'
+        + '並與銷售需要（每戶配車位）取大。', 'input', pStalls));
+    } else if (!cat || !isNum(baseFloorM2)) {
       checks.push(mk('parking', 'warn', '缺基準容積', '依用途類別換算法定停車位', parkLaw, '缺基地面積或容積率。', 'low'));
     } else {
       var stalls = Math.max(0, Math.ceil((baseFloorM2 - cat.exemptM2) / cat.perM2));
@@ -367,13 +439,47 @@ window.TD = window.TD || {};
         + '停車空間依第162條不計入容積。', 'high', stalls));
     }
 
-    /* ================= 9. 細部計畫但書（提醒） ================= */
-    checks.push(mk('detailPlan', 'info', '分區證明書與細部計畫土管要點',
+    /* ================= 9a. 最小開發規模、公共設施用地（依證明書） ================= */
+    if (isNum(site.minSiteM2)) {
+      var minOk = site.siteM2 >= site.minSiteM2;
+      checks.push(mk('minSite', minOk ? 'pass' : 'fail', '基地 ' + n(site.siteM2, 0) + ' ㎡',
+        '細部計畫最小開發規模 ' + n(site.minSiteM2, 0) + ' ㎡', '分區證明書／細部計畫土地使用分區管制要點',
+        minOk ? '基地面積已達最小開發規模。' : '基地面積未達最小開發規模，須合併鄰地或依規定申請，否則不得單獨開發。', 'input', site.minSiteM2));
+    }
+    if (pl.whole.length || pl.partial.length) {
+      checks.push(mk('publicLand', pl.partial.length ? 'warn' : 'pass',
+        (pl.whole.length ? '整筆：' + pl.whole.map(function (x) { return x.no + '（' + x.zone + '）'; }).join('、') : '')
+        + (pl.partial.length ? (pl.whole.length ? '；' : '') + '部分：' + pl.partial.map(function (x) { return x.no + '（' + x.zone + '）'; }).join('、') : ''),
+        '公共設施用地不得作一般建築使用', '都市計畫法第42、48、50條；分區證明書',
+        (pl.whole.length ? '整筆公共設施用地已自基準容積扣除（' + n(pl.wholeM2, 2) + ' ㎡）。' : '')
+        + (pl.partial.length ? '部分公共設施用地無法自動切分面積：請向地政事務所申請地籍逕為分割或以地籍圖量算，'
+          + '把可建築部分的面積填回左欄地號列。' : '')
+        + '公共設施保留地可評估捐贈作為容積移轉送出基地。', 'input'));
+    }
+
+    /* ================= 9. 細部計畫但書 ================= */
+    if (cert && cert.hasText) {
+      var cUsed = [], cRows = cert.rows || [], ci, conds = cert.conditions || [];
+      for (ci = 0; ci < cRows.length; ci++) cUsed.push(cRows[ci].label + ' ' + cRows[ci].value);
+      var cStatus = (!cRows.length && !conds.length) ? 'warn' : ((conds.length || cert.unparsed.length || pl.partial.length) ? 'warn' : 'pass');
+      var cNote = cRows.length ? '已採用分區證明書（' + cert.kind + '）：' + cUsed.join('；') + '。' : '貼上的文字沒有抓到使用分區、建蔽率或容積率，請確認貼的是分區證明書或細部計畫土管要點。';
+      if (conds.length) {
+        var cl = [];
+        for (ci = 0; ci < conds.length && ci < 8; ci++) cl.push('〔' + conds[ci].cat + '〕' + conds[ci].text);
+        cNote += '附帶條件與提醒（須逐條確認對量體與時程的影響）：' + cl.join('；') + (conds.length > 8 ? '；…另 ' + (conds.length - 8) + ' 則' : '') + '。';
+      }
+      if (cert.unparsed.length) cNote += '另有 ' + cert.unparsed.length + ' 行含管制字詞但未能解析，請人工核對（左欄「分區證明書」區塊列出原文）。';
+      if (pl.missing.length) cNote += '證明書列出的地號 ' + pl.missing.join('、') + ' 不在左欄地號列。';
+      checks.push(mk('detailPlan', cStatus, '已貼上' + cert.kind + '（' + cRows.length + ' 項數值、' + conds.length + ' 則條件）',
+        '個案實際管制以該地號之土地使用分區證明書、都市計畫書及細部計畫土地使用分區管制要點為準',
+        '都市計畫法第22條、第32條；建築法第48條；分區證明書', cNote, 'input'));
+    } else checks.push(mk('detailPlan', 'info', '分區證明書與細部計畫土管要點',
       '個案實際管制以該地號之土地使用分區證明書、都市計畫書及細部計畫土地使用分區管制要點為準',
       '都市計畫法第22條、第32條；建築法第48條',
       '本表已套用' + (city || '該縣市') + '的通案規定' + (z && z.farReason ? '（' + z.farReason + '）' : '')
       + '。申請分區證明書時請一併核對：（1）建蔽率、容積率是否另訂；（2）退縮與無遮簷人行道寬度；（3）停車空間是否加嚴；'
-      + '（4）有無附帶條件（回饋、捐地、整體開發）；（5）是否位於都市設計審議範圍；（6）有無公共設施保留地或既成道路夾雜。',
+      + '（4）有無附帶條件（回饋、捐地、整體開發）；（5）是否位於都市設計審議範圍；（6）有無公共設施保留地或既成道路夾雜。'
+      + '把證明書或細部計畫條文貼到左欄「分區證明書」區塊，系統會改用其中的數值與條件重算。',
       'mid'));
 
     /* ---- 人工判定 ---- */
@@ -411,6 +517,8 @@ window.TD = window.TD || {};
       },
       areaM2Used: areaM2,
       areaSource: areaSrc,
+      certUse: certUse,
+      heightCapM: hCap,
       setbackFrontM: sbFront,
       heightMaxBlockM: hBlock,
       heightMaxTowerM: hTower,

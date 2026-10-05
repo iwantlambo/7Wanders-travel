@@ -1,0 +1,83 @@
+# 土地開發可行性評估（land-feasibility/）：每週更新內政部實價登錄行情檔，跑完整檢查後提交，並打包網站 zip。
+#
+# 內政部每月 1、11、21 日更新本期資料；每週跑一次，網站上的行情最多晚 7 天。
+# 季別資料發布後不再變動，用 actions/cache 保存，不必每次重新下載。
+# 下載到的筆數明顯不足（網站改版、下載到錯誤頁面）時 fetch_lvr.py 會失敗，這一週就不提交。
+# 排程只在預設分支執行；也可以在 Actions 頁面手動執行。
+
+name: 實價登錄行情每週更新（土地開發可行性評估）
+
+on:
+  schedule:
+    - cron: "41 3 * * 3"   # 每週三 03:41 UTC（台灣 11:41）
+  workflow_dispatch:
+    inputs:
+      seasons:
+        description: "下載近幾季歷史資料（不含本期）"
+        default: "8"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: land-feasibility-lvr
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: land-feasibility
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: 快取季別資料
+        uses: actions/cache@v4
+        with:
+          path: land-feasibility/.lvr-cache
+          key: lvr-seasons-${{ github.run_id }}
+          restore-keys: lvr-seasons-
+
+      - name: 下載實價登錄開放資料
+        env:
+          SEASONS: ${{ github.event.inputs.seasons || '8' }}
+        run: python3 tools/fetch_lvr.py --out .lvr-data --cache .lvr-cache --seasons "$SEASONS"
+
+      - name: 產生各縣市行情檔
+        run: python3 tools/build_lvr.py .lvr-data js/data/lvr
+
+      - name: 全專案檢查（語法、煙霧測試、離線規則）
+        run: sh tools/checkall.sh
+
+      - name: 行情有變動才提交
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add js/data/lvr
+          if git diff --cached --quiet; then
+            echo "行情檔沒有變動，不提交。"
+          else
+            git commit -m "Refresh 實價登錄 data for land-feasibility ($(date -u +%Y-%m-%d))"
+            git push
+          fi
+
+      - name: 打包網站
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/dist"
+          zip -qr "$GITHUB_WORKSPACE/dist/land-feasibility.zip" . -x '.lvr-cache/*' '.lvr-data/*'
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: land-feasibility-site
+          path: dist/land-feasibility.zip
+          retention-days: 30

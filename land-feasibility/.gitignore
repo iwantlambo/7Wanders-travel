@@ -1,0 +1,3 @@
+# tools/fetch_lvr.py 的下載快取與中間檔（只在本機或 GitHub Actions 產生，不進版控）
+.lvr-cache/
+.lvr-data/

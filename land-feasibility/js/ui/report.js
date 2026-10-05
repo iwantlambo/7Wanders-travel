@@ -129,7 +129,12 @@ window.TD = window.TD || {};
     h += R.summaryBlock(ctx, p);
 
     h += h2('風險與待確認');
-    h += R.riskBlock(ctx, p);
+    h += R.riskBlock(ctx, p, { full: true });
+
+    if (p && p.research && p.research.result && U().researchReport) {
+      h += h2('周邊行情與土地交易（自動研究）');
+      h += U().researchReport(ctx, p);
+    }
 
     h += h2('敏感度');
     h += R.sensitivityBlock(ctx, p);
