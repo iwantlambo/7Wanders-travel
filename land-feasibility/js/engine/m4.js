@@ -83,8 +83,11 @@ window.TD = window.TD || {};
       out.price = numOr(TD.data.cost && TD.data.cost.fallbackUnitPricePing, 600000);
       out.priceFrom = '尚無本區實價登錄資料，暫以保守單價試算';
     }
-    if (TD.engine.lvrLand) {
-      var ld = TD.engine.lvrLand(site.city, site.district, site.zoneCls);
+    var m6land = ctx.m6 && ctx.m6.market ? ctx.m6.market.land : null;
+    if (m6land && isNum(m6land.perPing)) {
+      out.landPerPing = m6land.perPing; out.landFrom = m6land.label; out.landConf = m6land.conf;
+    } else if (TD.engine.lvrLand) {
+      var ld = TD.engine.lvrLand(site.city, site.district, (site.origZone && site.origZone.cls) || site.zoneCls);
       if (ld && isNum(ld.perPing)) { out.landPerPing = ld.perPing; out.landFrom = ld.label; out.landConf = ld.conf; }
     }
     return out;
@@ -354,6 +357,7 @@ window.TD = window.TD || {};
 
     function bucketName(k) {
       return { reg: '制度型獎勵', extra: '時程與規模獎勵', open: '綜合設計', tod: 'TOD 增額容積', tdr: '容積移轉',
+               base: '基準容積加給',
                ind: '產業獎勵（投資、能源、總部）', indDon: '捐贈產業空間' }[k] || k;
     }
 

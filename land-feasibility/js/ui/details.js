@@ -345,7 +345,7 @@ window.TD = window.TD || {};
      4. 比價明細（方法一行、drivers、案例表、散佈圖）
      ------------------------------------------------------------------ */
 
-  var METHOD_ZH = { district: '本區實價登錄預售成交中位數', hedonic: '特徵價格回歸（匯入案例）',
+  var METHOD_ZH = { district: '本區實價登錄預售成交中位數', research: '研究行情中位數（使用者輸入）', hedonic: '特徵價格回歸（匯入案例）',
                     weighted: '逐筆調整加權（匯入案例）', manual: '使用者指定單價', none: '尚無單價（請匯入案例或指定單價）' };
 
   function methodLine(m6) {
@@ -459,6 +459,20 @@ window.TD = window.TD || {};
       { k: 'unitPricePing', label: '單價', fmt: 'unitPrice', align: 'r', plain: true },
       { k: 'zoneText', label: '使用分區', render: function (v) { return small(v, 18); } }
     ], rows, { p: p, empty: '沒有案例。' }) + '</div>';
+    var od = isArr(land.oldDeals) ? land.oldDeals : [];
+    if (od.length) {
+      h += line('大面積舊建物房地整宗交易（土地 300 坪以上、屋齡 30 年以上）：舊廠房、舊透天整宗出售時建物殘值很低，'
+              + '總價 ÷ 土地坪數接近地價；開放資料未載分區，僅供參考，未併入上方中位數。');
+      h += U().table([
+        { k: 'ym', label: '成交年月', render: function (v) { return isNum(v) ? esc(Math.floor(v / 100) + '/' + ('0' + (v % 100)).slice(-2)) : dash(); } },
+        { k: 'addr', label: '路段' },
+        { k: 'areaPing', label: '土地 坪', fmt: 'n', d: 1, align: 'r', plain: true },
+        { k: 'buildingPing', label: '建物 坪', fmt: 'n', d: 1, align: 'r', plain: true },
+        { k: 'ageYears', label: '屋齡', align: 'r' },
+        { k: 'totalWan', label: '總價 萬', fmt: 'n', d: 0, align: 'r', plain: true },
+        { k: 'unitPricePing', label: '每坪地價', fmt: 'unitPrice', align: 'r', plain: true }
+      ], od, { p: p, empty: '' });
+    }
     return h;
   }
 

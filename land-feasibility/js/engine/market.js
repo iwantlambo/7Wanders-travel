@@ -223,15 +223,67 @@ window.TD = window.TD || {};
         conf = 'low';
       }
       return { perPing: v, p25: st.p25, p50: st.p50, p75: st.p75, n: st.n, scope: r.scope, conf: conf,
-               label: place + zl + '土地實價登錄 ' + st.n + ' 筆（' + period(city) + '），' + how, comps: comps };
+               label: place + zl + '土地實價登錄 ' + st.n + ' 筆（' + period(city) + '），' + how, comps: comps,
+               oldDeals: lv.comps(r.rec, 'X', r.name) };
     }
     var pool = lv.pool(city, key, null);
     if (pool && pool.stat.n >= 5) {
       return { perPing: pool.stat.p50, p25: pool.stat.p25, p50: pool.stat.p50, p75: pool.stat.p75, n: pool.stat.n,
                scope: 'county', conf: 'low',
-               label: city + '全市' + zl + '土地實價登錄 ' + pool.stat.n + ' 筆中位數（本區樣本不足）', comps: pool.comps };
+               label: city + '全市' + zl + '土地實價登錄 ' + pool.stat.n + ' 筆中位數（本區樣本不足）', comps: pool.comps,
+               oldDeals: r ? lv.comps(r.rec, 'X', r.name) : [] };
     }
     return null;
+  }
+
+  /* ---------------- 研究行情（使用者查到的新案、成交，逐行輸入） ----------------
+     每行：類別, 名稱, 單價（萬／坪，可寫 77-88 取中間值）, 年月（可省）, 來源（可省）
+     類別：住宅（預售住宅大樓）、華廈、透天、廠辦、辦公、店面、土地。
+     例：住宅, 悅田吾澍, 77-88, 2026-09, 樂居
+         土地, TOYOTA 三重舊廠（溪尾街）, 70, 2025-10, ETtoday 房產雲 */
+  var KIND = [
+    [/土地|工業地|乙工|素地|地價/, 'land'],
+    [/廠辦|科技大樓|智慧廠/, '廠辦'],
+    [/辦公|商辦/, '辦公商業大樓'],
+    [/店面|店舖|店鋪/, '店面'],
+    [/華廈/, '華廈'],
+    [/透天/, '透天厝'],
+    [/住宅|預售|新案|大樓|住家/, '住宅大樓']
+  ];
+
+  function toNumZh(t) {
+    return String(t).replace(/[０-９．]/g, function (c) { return c === '．' ? '.' : String.fromCharCode(c.charCodeAt(0) - 0xFEE0); });
+  }
+
+  function parseResearch(text) {
+    var lines = String(text || '').split(/\r?\n/), out = [], errors = [], i, raw, parts, kind, k, nums, price, ym, m;
+    for (i = 0; i < lines.length; i++) {
+      raw = toNumZh(lines[i]).replace(/^[\s　]+|[\s　]+$/g, '');
+      if (!raw || raw.charAt(0) === '#') continue;
+      parts = raw.split(/\s*[,，、\t]\s*/);
+      kind = null;
+      for (k = 0; k < KIND.length; k++) if (KIND[k][0].test(parts[0] || '')) { kind = KIND[k][1]; break; }
+      nums = (parts[2] || '').match(/\d+(?:\.\d+)?/g);
+      if (!kind || !nums) { errors.push('第 ' + (i + 1) + ' 行看不懂：「' + lines[i] + '」'); continue; }
+      price = nums.length >= 2 ? (Number(nums[0]) + Number(nums[1])) / 2 : Number(nums[0]);
+      if (price < 10000) price = price * 1e4;          /* 寫萬元／坪 */
+      ym = null;
+      m = (parts[3] || '').match(/(\d{2,4})\D+(\d{1,2})/);
+      if (m) { var y = Number(m[1]); if (y < 1911) y += 1911; ym = y * 100 + Number(m[2]); }
+      out.push({ kind: kind === 'land' ? 'land' : 'price', product: kind === 'land' ? '' : kind,
+                 name: parts[1] || '', price: price, lo: nums.length >= 2 ? Number(nums[0]) * (Number(nums[0]) < 10000 ? 1e4 : 1) : price,
+                 hi: nums.length >= 2 ? Number(nums[1]) * (Number(nums[1]) < 10000 ? 1e4 : 1) : price,
+                 ym: ym, src: parts.slice(4).join('、'), line: i + 1 });
+    }
+    return { items: out, errors: errors };
+  }
+
+  function researchFor(items, product) {
+    var out = [], i;
+    for (i = 0; i < items.length; i++) {
+      if (product === 'land' ? items[i].kind === 'land' : (items[i].kind === 'price' && items[i].product === product)) out.push(items[i]);
+    }
+    return out;
   }
 
   /* ---------------- 便捷介面（m4 用） ---------------- */
@@ -246,6 +298,7 @@ window.TD = window.TD || {};
 
   TD.engine.market = {
     presale: presale, resale: resale, parking: parking, absorb: absorb, unitSize: unitSize,
-    stallRatio: stallRatio, land: land, proxy: PROXY, MIN_N: MIN_N
+    stallRatio: stallRatio, land: land, proxy: PROXY, MIN_N: MIN_N,
+    parseResearch: parseResearch, researchFor: researchFor, median: median
   };
 })(window.TD);

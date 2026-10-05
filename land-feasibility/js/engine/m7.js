@@ -87,7 +87,9 @@ window.TD = window.TD || {};
     var handoverMonths = clampInt(pref(m7p, 'handoverMonths', num(schD.handoverMonths, 6)), 0, 36);
     var presaleStartMonth = clampInt(pref(m7p, 'presaleStartMonth', num(schD.presaleStartMonth, 12)), 0, 180);
     var reg = resolveRegime(p, ctx);
-    var planMonthsEff = Math.max(planMonths, reg.baseMonths) + reg.bonusMonthsAdd;
+    var rzMonths = (site && site.rezone) ? site.rezone.months : 0;
+    var planMonthsEff = Math.max(planMonths, reg.baseMonths) + reg.bonusMonthsAdd + rzMonths;
+    if (rzMonths) notes.push(site.rezone.label + '：都市計畫變更審議另加 ' + rzMonths + ' 個月。');
     var presaleStartEff = Math.max(planMonthsEff, presaleStartMonth + (planMonthsEff - planMonths));
     if (planMonthsEff !== planMonths) {
       notes.push('規劃請照期依「' + reg.regimeName + '」作業 ' + reg.baseMonths + ' 個月與獎勵加計 ' + reg.bonusMonthsAdd

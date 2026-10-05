@@ -191,6 +191,17 @@ def main():
                 rec["c"]["L" + z] = [[ym(g(r, "date")), section(g(r, "addr")), round(g(r, "area"), 1),
                                       round(g(r, "unit") / 100), (g(r, "extra") or "")[:18]]
                                      for r in rows[:K_LAND]]
+            # ---- 大面積舊建物房地交易（土地 300 坪以上、屋齡 30 年以上）：以總價 ÷ 土地坪數作為地價參考 ----
+            # 舊廠房、舊透天整宗出售時，建物殘值很低，成交價幾乎就是地價（例：三重溪尾街 TOYOTA 舊廠）。
+            # 開放資料的成屋檔沒有使用分區欄位，因此只列為參考案例，不併入分區土地中位數。
+            # 整宗舊廠房多為多筆地號、多棟建物合併登記，因此這裡包含開放資料標記為多筆的交易
+            big = [r for r in d.get("sale", []) if (g(r, "landPing") or 0) >= 300 and (g(r, "age") or 0) >= 30 and g(r, "total")]
+            big.sort(key=lambda r: -g(r, "date"))
+            if big:
+                rec["c"]["X"] = [[ym(g(r, "date")), road(g(r, "addr"), dname), round(g(r, "landPing"), 1),
+                                  round(g(r, "total") / g(r, "landPing") / 100), round(g(r, "age") or 0),
+                                  round(g(r, "area") or 0, 1), round(g(r, "total") / 1e4)]
+                                 for r in big[:12]]
             # ---- 單獨車位交易（元／位） ----
             park = d.get("park", [])
             for t in ("坡道平面", "坡道機械", "升降平面", "升降機械", "塔式車位", "一樓平面"):

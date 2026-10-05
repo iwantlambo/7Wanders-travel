@@ -44,6 +44,18 @@ window.TD = window.TD || {};
               parkingCat: '1', absorbPerMonth: 1, stallsPerUnit: 0.3, basement: true, label: '店面' }
   };
 
+  /* 工業區變更（都市計畫個案變更）：新北市都市計畫工業區變更審議原則（112.5.16 修正）。
+     回饋比例（捐地或折算代金）：變更為住宅區 37%、商業區 40.5%；變更後容積率高於內政部都委會
+     第 662 次會議決議標準者，住宅區提高為 40%、商業區 44%（新北市另加 3%／3.5%）。
+     本系統一律採較高者試算（新北市主要計畫區住宅區 300%、商業區 440% 皆高於標準），
+     以回饋後剩餘土地 × 新分區容積率計算基準容積；都市計畫變更審議期以 36 個月計。*/
+  var REZONE = {
+    res: { zone: '住宅區', label: '工業區變更為住宅區', ratio: 0.40, months: 36,
+           law: '新北市都市計畫工業區變更審議原則；都市計畫工業區檢討變更審議規範' },
+    com: { zone: '商業區', label: '工業區變更為商業區', ratio: 0.44, months: 36,
+           law: '新北市都市計畫工業區變更審議原則；都市計畫工業區檢討變更審議規範' }
+  };
+
   function isNum(v) { return typeof v === 'number' && isFinite(v); }
   function str(v) { return (v === null || v === undefined) ? '' : String(v); }
   function trim(s) { return str(s).replace(/^[\s　]+/, '').replace(/[\s　]+$/, ''); }
@@ -96,6 +108,21 @@ window.TD = window.TD || {};
     var z = zoneOf(city, zoneIn, district, (isFinite(roadIn) && roadIn > 0) ? roadIn : null);
     var siteM2 = areaOf(pc.numbers);
 
+    /* 工業區變更：分區換成新分區（容積率依行政區），基準容積以回饋後剩餘土地計 */
+    var rz = null, rzIn = trim(pc.rezone), origZone = z;
+    if (z && z.cls === '工' && Object.prototype.hasOwnProperty.call(REZONE, rzIn)) {
+      var def = REZONE[rzIn];
+      var nz = zoneOf(city, def.zone, district, (isFinite(roadIn) && roadIn > 0) ? roadIn : null);
+      if (nz) {
+        rz = { type: rzIn, label: def.label, ratio: def.ratio, months: def.months, law: def.law,
+               fromZone: z.name, toZone: nz.name, keptM2: siteM2 * (1 - def.ratio),
+               note: def.label + '：回饋 ' + Math.round(def.ratio * 100) + '%（捐地或折算代金），以剩餘 '
+                   + Math.round((1 - def.ratio) * 100) + '% 土地 × ' + nz.name + '容積率 ' + Math.round(nz.far * 100)
+                   + '% 計算基準容積；須符合新北市都市發展暨工業區變更策略、以街廓為原則，審議約 3 年以上，核准與否由都委會決定。' };
+        z = nz;
+      }
+    }
+
     /* 基地寬深：有輸入用輸入；沒有就以正方形估算，並記入 assumed */
     var w = Number(pc.siteWidth), d = Number(pc.siteDepth), shapeAssumed = false;
     if (!(isFinite(w) && w > 0) || !(isFinite(d) && d > 0)) {
@@ -123,6 +150,7 @@ window.TD = window.TD || {};
     return {
       city: city, district: district, zoneInput: zoneIn,
       zone: z, zoneFound: !!z, zoneCls: z ? z.cls : '',
+      origZone: origZone, rezone: rz, rezoneable: !!(origZone && origZone.cls === '工'),
       allowRes: z ? !!z.allowRes : true,
       product: product, productAuto: productAuto, params: PRODUCT_PARAMS[product] || PRODUCT_PARAMS['住宅大樓'],
       useConflict: useConflict,
@@ -144,4 +172,5 @@ window.TD = window.TD || {};
   TD.engine.productParams = PRODUCT_PARAMS;
   TD.engine.products = PRODUCTS;
   TD.engine.DEFAULT_ROAD_M = DEFAULT_ROAD_M;
+  TD.engine.REZONE = REZONE;
 })(window.TD);

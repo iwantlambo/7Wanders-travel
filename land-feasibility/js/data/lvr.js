@@ -23,6 +23,8 @@ window.TD = window.TD || {};
        'P'+型態   [交易年月yyyymm, 路名, 樓層, 總樓層, 坪數, 單價/100, 建案]
        'N'+型態   [交易年月, 路名, 樓層, 總樓層, 坪數, 單價/100, 屋齡]
        'L'+分區   [交易年月, 地段, 坪數, 單價/100, 使用分區原文]
+       'X'        大面積舊建物房地交易（土地 300 坪以上、屋齡 30 年以上）：
+                  [交易年月, 路名, 土地坪數, 總價÷土地坪數/100, 屋齡, 建物坪數, 總價（萬）]
 
      本檔只做取用與合併，不含任何資料，也不碰 DOM（載入由 js/main.js 負責）。
      -------------------------------------------------------------------------- */
@@ -76,7 +78,10 @@ window.TD = window.TD || {};
     if (!isArr(c)) return out;
     for (i = 0; i < c.length; i++) {
       r = c[i];
-      if (head === 'L') {
+      if (head === 'X') {
+        out.push({ ym: r[0], addr: r[1], areaPing: r[2], unitPricePing: r[3] * 100, ageYears: r[4], buildingPing: r[5],
+                   totalWan: r[6], district: district || '', zoneText: '房地整宗（屋齡 ' + r[4] + ' 年）' });
+      } else if (head === 'L') {
         out.push({ ym: r[0], addr: r[1], areaPing: r[2], unitPricePing: r[3] * 100, zoneText: r[4], district: district || '' });
       } else {
         out.push({ ym: r[0], addr: r[1], floor: r[2], totalFloors: r[3], areaPing: r[4], unitPricePing: r[5] * 100,

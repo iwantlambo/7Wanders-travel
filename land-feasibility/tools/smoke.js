@@ -1,4 +1,4 @@
-/* tools/smoke.js —— 二十八項斷言。
+/* tools/smoke.js —— 三十二項斷言。
    1～8 是 SPEC 第 9 節的前八項；
    9～11 原本查三個客戶版本的頭條數字與投影片，版本機制已移除，改查
    m8.stress（四項齊全、判定合法）、m8.walkAway（非 NaN 且不高於出價上限）
@@ -155,7 +155,7 @@ if (ctx.errors && ctx.errors.length) {
   console.log('');
 }
 
-console.log('=== smoke：二十八項斷言 ===');
+console.log('=== smoke：三十二項斷言 ===');
 console.log('示範專案：' + p.name);
 
 /* ---- 1. m3.baseFloorM2 為正，且等於面積 × 容積率 ---- */
@@ -734,6 +734,65 @@ check(28, '示範專案與幸福段案例的介面與報告不出現「待查證
   }
   if (bad.length) return { ok: false, detail: bad.join('；') };
   return { ok: true, detail: '兩個專案的介面與報告都沒有' };
+});
+
+/* ================= 29～32：2026-10-05 工業區都更、變更與研究行情 ================= */
+
+/* ---- 29. 工業區變更為住宅區：以回饋 40% 後的剩餘土地 × 住宅區容積率計算，產品改住宅，土地仍比工業區行情 ---- */
+check(29, '工業區變更為住宅區：基準容積 = 面積 × 60% × 300%、產品住宅大樓、審議加 36 個月、土地比較仍用工業區行情', function () {
+  var c = TD.engine.run(caseP('乙種工業區', function (q) { q.parcel.rezone = 'res'; })), bad = [];
+  var want = 1618 * 0.6 * 3.0, got = raw(c.m3.baseFloorM2);
+  if (!(Math.abs(got - want) < 1e-6)) bad.push('基準容積 ' + fmtNum(got) + '，應為 ' + fmtNum(want));
+  if (c.m3.site.product !== '住宅大樓') bad.push('產品 ' + c.m3.site.product);
+  if (!(c.m7.schedule.planMonthsEff >= 36 + 12)) bad.push('規劃期 ' + c.m7.schedule.planMonthsEff + ' 個月，未加計都市計畫變更審議');
+  var lm = c.m6.market && c.m6.market.land;
+  if (!lm || !/工業區/.test(lm.label)) bad.push('土地行情不是工業區：' + (lm && lm.label));
+  if (bad.length) return { ok: false, detail: bad.join('；') };
+  return { ok: true, detail: '基準容積 ' + fmtNum(Math.round(got)) + ' ㎡、規劃期 ' + c.m7.schedule.planMonthsEff + ' 個月、出價上限每坪 '
+    + fmtNum(Math.round(raw(c.m8.landCapPerPing))) };
+});
+
+/* ---- 30. 研究行情：同產品單價與土地成交優先於實價登錄中位數 ---- */
+check(30, '研究行情：廠辦 52-62 取 57 萬、土地 70 萬，看不懂的行要回報', function () {
+  var c = TD.engine.run(caseP('乙種工業區', function (q) {
+    q.m6.researchText = '廠辦, 新案A, 52-62, 2026-06, 報導\n土地, TOYOTA 三重舊廠, 70, 2025-10, ETtoday\n看不懂的一行';
+  })), bad = [];
+  if (c.m6.method !== 'research') bad.push('m6.method 應為 research，實際 ' + c.m6.method);
+  if (raw(c.m6.unitPricePing) !== 570000) bad.push('單價 ' + fmtNum(raw(c.m6.unitPricePing)));
+  if (!c.m8.benchmark || c.m8.benchmark.perPing !== 700000) bad.push('土地行情 ' + fmtNum(c.m8.benchmark && c.m8.benchmark.perPing));
+  if (!c.m6.research || c.m6.research.errors.length !== 1) bad.push('應回報 1 行看不懂');
+  if (bad.length) return { ok: false, detail: bad.join('；') };
+  return { ok: true, detail: '採用研究行情，出價上限每坪 ' + fmtNum(Math.round(raw(c.m8.landCapPerPing))) };
+});
+
+/* ---- 31. 新北都更：二箭基準容積加給依基地規模與路寬，TOD 可併入都更 ---- */
+check(31, '新北都更二箭：2,000 ㎡ 以上臨 20 m 路加給 10%，未達 2,000 ㎡ 不適用；都更可列入 TOD', function () {
+  var bad = [];
+  function urItem(c, id) {
+    var regs = c.m4.regimes || [], i, j;
+    for (i = 0; i < regs.length; i++) if (regs[i].id === 'UR') for (j = 0; j < regs[i].items.length; j++) if (regs[i].items[j].id === id) return regs[i].items[j];
+    return null;
+  }
+  var big = TD.engine.run(caseP('乙種工業區', function (q) {
+    q.parcel.numbers = [{ no: '1', areaM2: 2400, share: '1/1' }]; q.parcel.roadWidth = 20; q.parcel.buildingAgeYears = 50;
+    q.parcel.existingFloorM2 = 2000; q.parcel.mrtDistanceM = 250;
+  }));
+  var nb = urItem(big, 'NTP_BASE'), tod = urItem(big, 'TOD');
+  if (!nb || nb.pct !== 0.1) bad.push('2,400 ㎡ 臨 20 m 路的二箭應為 10%，實際 ' + fmtNum(nb && nb.pct));
+  if (!tod || !(tod.pct > 0)) bad.push('距站 250 m 的都更應可申請 TOD 增額容積');
+  var small = urItem(cCase, 'NTP_BASE');
+  if (!small || small.applicable) bad.push('1,618 ㎡ 不應適用二箭');
+  if (bad.length) return { ok: false, detail: bad.join('；') };
+  return { ok: true, detail: '二箭 10%、TOD ' + fmtNum(tod.pct) };
+});
+
+/* ---- 32. 大面積舊廠房房地交易列為地價參考（例：三重溪尾街 TOYOTA 舊廠 2025-10，約 67 萬／坪）---- */
+check(32, '三重區土地行情附大面積舊建物房地交易，含 2025-10 溪尾街一筆、每坪地價 60～75 萬', function () {
+  var lm = cCase.m6.market && cCase.m6.market.land, od = lm && lm.oldDeals ? lm.oldDeals : [], i, hit = null;
+  for (i = 0; i < od.length; i++) if (od[i].addr === '溪尾街' && od[i].ym === 202510) hit = od[i];
+  if (!hit) return { ok: false, detail: '找不到溪尾街 2025-10 的交易（共 ' + od.length + ' 筆）' };
+  if (!(hit.unitPricePing >= 600000 && hit.unitPricePing <= 750000)) return { ok: false, detail: '每坪地價 ' + fmtNum(hit.unitPricePing) };
+  return { ok: true, detail: '溪尾街 ' + hit.areaPing + ' 坪、總價 ' + hit.totalWan + ' 萬、每坪 ' + fmtNum(hit.unitPricePing) };
 });
 
 /* ================================================================= */

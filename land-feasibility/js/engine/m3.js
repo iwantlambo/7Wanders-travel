@@ -138,6 +138,11 @@ window.TD = window.TD || {};
     var areaM2 = null, areaSrc = '';
     if (ctx.m1 && isNum(TD.raw(ctx.m1.areaM2)) && TD.raw(ctx.m1.areaM2) > 0) { areaM2 = TD.raw(ctx.m1.areaM2); areaSrc = '地號面積合計'; }
     else if (site.siteM2 > 0) { areaM2 = site.siteM2; areaSrc = '地號面積合計'; }
+    if (site.rezone && isNum(areaM2) && areaM2 > 0) {
+      notes.push(site.rezone.note);
+      areaM2 = areaM2 * (1 - site.rezone.ratio);
+      areaSrc = '地號面積合計扣除變更回饋 ' + Math.round(site.rezone.ratio * 100) + '%';
+    }
     if (!isNum(areaM2) || areaM2 <= 0) {
       areaM2 = null;
       notes.push('基地面積為 0，建築面積與基準容積無法計算。請先在左欄填入地號面積（以謄本標示部為準）。');

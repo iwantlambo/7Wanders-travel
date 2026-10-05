@@ -188,7 +188,8 @@ window.TD = window.TD || {};
 
     var rows = [
       ['產權', lampCell(ctx)],
-      ['分區／產品', esc((site.zone ? site.zone.name : (site.zoneInput || '—')) + '／' + (site.product || '—'))],
+      ['分區／產品', esc((site.rezone ? site.rezone.fromZone + ' → ' + site.rezone.toZone + '（變更）'
+                         : (site.zone ? site.zone.name : (site.zoneInput || '—'))) + '／' + (site.product || '—'))],
       ['建蔽率', n(m3.bcr, 'pct', 1)],
       ['容積率', n(m3.far, 'pct', 1)],
       ['基準容積 坪', n(m3.baseFloorM2, 'ping', 1)],
@@ -198,7 +199,8 @@ window.TD = window.TD || {};
       ['可售坪（不含車位）', n(m5.sellablePing, 'n', 1)],
       ['戶數／車位', n(m5.unitsCount, 'n', 0) + ' ／ ' + n(m5.stalls, 'n', 0)],
       ['地上／地下層數', n(m5.floorsAbove, 'n', 0) + ' ／ ' + plainNum(isNum(m5.basementLevels) ? m5.basementLevels : null, 'n', 0)],
-      ['預售單價 萬/坪', n(m6.presalePricePing, 'wanPing', 1)],
+      ['預售單價 萬/坪', n(m6.presalePricePing, 'wanPing', 1)
+        + (m6.method === 'research' ? '<span class="legal">　研究行情</span>' : (m6.method === 'district' ? '<span class="legal">　實價登錄</span>' : ''))],
       ['新成屋行情 萬/坪', rs && rs.newer ? plainNum(rs.newer.p50, 'wanPing', 1) + '<span class="legal">　' + esc(rs.type) + '，屋齡 5 年內 ' + esc(String(rs.newer.n)) + ' 筆</span>'
         : (rs && rs.all ? plainNum(rs.all.p50, 'wanPing', 1) + '<span class="legal">　全部成屋</span>' : why('本區查無成屋成交'))],
       ['車位單價 萬/位', plainNum(isNum(m6.parkingPricePerStall) ? m6.parkingPricePerStall : null, 'wanPing', 0)],

@@ -150,7 +150,30 @@ window.TD = window.TD || {};
     /* ---- 本區行情（無論走哪條路徑都列出供對照） ---- */
     var pre = (mkt && lvrLoaded) ? mkt.presale(city, district, product) : null;
     var resale = (mkt && lvrLoaded) ? mkt.resale(city, district, product) : null;
-    var land = (mkt && lvrLoaded) ? mkt.land(city, district, site.zoneCls) : null;
+    /* 土地行情以「原分區」查（工業區變更試算時，買的仍是工業區土地） */
+    var landZoneCls = (site.origZone && site.origZone.cls) ? site.origZone.cls : site.zoneCls;
+    var landLvr = (mkt && lvrLoaded) ? mkt.land(city, district, landZoneCls) : null;
+    var land = landLvr;
+
+    /* ---- 研究行情：使用者查到的新案單價與土地成交，優先於實價登錄中位數 ---- */
+    var rsch = (mkt && mkt.parseResearch) ? mkt.parseResearch(s.researchText) : { items: [], errors: [] };
+    var rPrice = mkt ? mkt.researchFor(rsch.items, product) : [];
+    var rLand = mkt ? mkt.researchFor(rsch.items, 'land') : [];
+    if (rsch.errors.length) notes.push('研究行情：' + rsch.errors.join('；'));
+    function rStats(list) {
+      var v = list.map(function (x) { return x.price; }).sort(function (a, b) { return a - b; });
+      return { n: v.length, p25: v[0], p50: mkt.median(v), p75: v[v.length - 1] };
+    }
+    if (rLand.length) {
+      var rl = rStats(rLand);
+      land = { perPing: rl.p50, p25: rl.p25, p50: rl.p50, p75: rl.p75, n: rl.n, scope: 'research', conf: 'input',
+               label: '研究行情（使用者輸入 ' + rl.n + ' 筆）：' + rLand.map(function (x) { return x.name; }).join('、')
+                    + (landLvr ? '；實價登錄同區同分區 ' + wan(landLvr.perPing) + '／坪' : ''),
+               comps: rLand.map(function (x) { return { ym: x.ym, addr: x.name, areaPing: null, unitPricePing: x.price,
+                                                        zoneText: '研究：' + (x.src || '使用者輸入'), district: district }; })
+                        .concat(landLvr && landLvr.comps ? landLvr.comps : []),
+               lvr: landLvr, oldDeals: landLvr ? landLvr.oldDeals : [] };
+    }
 
     var manual = isNum(s.manualUnitPricePing) && s.manualUnitPricePing > 0 ? s.manualUnitPricePing : null;
     var source = s.compSource === 'custom' ? 'custom' : 'district';
@@ -173,6 +196,25 @@ window.TD = window.TD || {};
       srcPrice = '使用者直接輸入之單價';
       formula = '單價 = 使用者輸入 ' + wan(manual) + '／坪';
       noteP = '使用者指定單價（不含車位）。下方本區實價登錄行情僅供對照。';
+    } else if (rPrice.length) {
+      method = 'research';
+      conf = 'input';
+      var rp = rStats(rPrice);
+      res = { price: rp.p50, lo: Math.min.apply(null, rPrice.map(function (x) { return x.lo; })),
+              hi: Math.max.apply(null, rPrice.map(function (x) { return x.hi; })), r2: null, n: rp.n, drivers: [],
+              comps: rPrice.map(function (x, k) {
+                return compOut({ id: 'r' + (k + 1), addr: x.src || '使用者輸入', district: district, type: product + '（研究）',
+                                 year: x.ym ? Math.floor(x.ym / 100) : null, ym: x.ym, unitPricePing: x.price, areaPing: null,
+                                 ageYears: 0, floor: null, totalFloors: null, distanceM: null, project: x.name }, {});
+              }).concat(pre && pre.comps ? pre.comps.map(function (c, k) {
+                return compOut({ id: 'p' + (k + 1), addr: c.addr, district: c.district, type: product + '（實價登錄）',
+                                 year: Math.floor(c.ym / 100), ym: c.ym, unitPricePing: c.unitPricePing, areaPing: c.areaPing,
+                                 ageYears: 0, floor: c.floor, totalFloors: c.totalFloors, distanceM: null, project: c.project }, {});
+              }) : []) };
+      srcPrice = '研究行情（使用者輸入 ' + rp.n + ' 筆）：' + rPrice.map(function (x) { return x.name; }).join('、');
+      formula = '單價 = 研究行情中位數 ' + wan(rp.p50) + '／坪（' + rPrice.map(function (x) { return x.name + ' ' + wan(x.price); }).join('、') + '）';
+      noteP = '採用你輸入的新案行情（通常比實價登錄中位數新）；本區實價登錄'
+            + (pre ? '同產品預售中位數 ' + wan(pre.point) + '／坪，供對照。' : '查無同產品預售。');
     } else if (source === 'custom') {
       var u = usable(s.comps);
       if (u.skipped) notes.push('匯入案例中有 ' + u.skipped + ' 筆缺單價或面積，已略過。');
@@ -286,7 +328,8 @@ window.TD = window.TD || {};
       comps: res.comps,
       notes: notes,
 
-      compSource: source === 'custom' ? '使用者匯入案例' : (pre ? pre.label : '（無）'),
+      compSource: method === 'research' ? srcPrice : (method === 'manual' ? '使用者指定單價'
+                  : (source === 'custom' ? '使用者匯入案例' : (pre ? pre.label : '（無）'))),
       compIsSample: false,
       compSkipped: 0,
       priceScope: pre ? pre.scope : '',
@@ -300,7 +343,8 @@ window.TD = window.TD || {};
       stalls: stalls,
       unitsCount: units,
       product: product,
-      market: { presale: pre, resale: resale, land: land, parking: pk, absorb: ab, loaded: lvrLoaded,
+      research: { items: rsch.items, errors: rsch.errors, priceN: rPrice.length, landN: rLand.length },
+      market: { presale: pre, resale: resale, land: land, landLvr: landLvr, parking: pk, absorb: ab, loaded: lvrLoaded,
                 meta: lvrLoaded ? lvr.meta(city) : null }
     };
   }

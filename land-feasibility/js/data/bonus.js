@@ -101,16 +101,19 @@ window.TD = window.TD || {};
       name: '都市更新',
       lawName: UR_ACT,
       article: '第65條',
-      caps: { reg: 0.50, tdr: 0.40 },
+      caps: { reg: 0.50, tdr: 0.40, tod: 0.50, base: 0.20 },
       baseMonths: 36,
       baseRisk: 'high',
-      allows: ['UR_STATUS', 'UR_ORIG', 'GREEN', 'SMART', 'BARRIER', 'SEISMIC', 'UR_TIME', 'UR_SCALE', 'UR_COOP', 'UR_SOCIAL', 'TDR'],
+      allows: ['UR_STATUS', 'UR_ORIG', 'GREEN', 'SMART', 'BARRIER', 'SEISMIC', 'UR_TIME', 'UR_SCALE', 'UR_COOP', 'UR_SOCIAL',
+               'NTP_BASE', 'TOD', 'TDR'],
       prereq: { minSiteM2: 1000, minAgeYears: 30, needBuilding: true,
                 consent: '事業計畫報核須達都市更新條例第37條同意比率（劃定更新地區：人數與面積均過半；'
                        + '自劃更新單元：均超過四分之三；面積均超過十分之九者人數不計）。' },
       note: '獎勵後容積不得超過 1.5 倍基準容積（條例第65條）；直轄市、縣（市）得以自治法規另訂獎勵，'
           + '上限 0.2 倍基準容積（本表未列，個案另計）。更新單元須符合各縣市更新單元劃定基準（常見：面積 1,000 ㎡ 以上、'
-          + '屋齡 30 年以上建物占一定比例）。'
+          + '屋齡 30 年以上建物占一定比例）。新北市另有「都更三箭」：第一箭捷運場站周邊增額容積（TOD，向市府價購）、'
+          + '第二箭基準容積加給（基地 2,000 ㎡ 以上、臨路 20 公尺以上，捐贈公益設施，最高 20%）；工業區都更'
+          + '（例：三重中興段，容積率由 210% 提高至 462%）維持產業使用，以智慧廠辦為主。'
     }
   ];
 
@@ -270,6 +273,17 @@ window.TD = window.TD || {};
       note: '獎勵額度以基準容積 30% 為上限；本系統以 15% 試算。'
     },
 
+    {
+      id: 'NTP_BASE', name: '新北都更二箭：基準容積加給', lawName: '新北市都市更新建築容積獎勵核算基準；新北市都更三箭', article: '',
+      pct: null, calc: 'ntpBase', bucket: 'base',
+      cost: 'donate', buildRatio: 0.35, monthsAdd: 6, risk: 'mid',
+      requires: { regimes: ['UR'], cities: ['新北市'] },
+      tradeoff: '須捐贈公益性設施（老人活動、長照、公共托育、社會住宅或中繼住宅等）；'
+              + '三重中興段案以約 223 坪公共化幼兒園換得基準容積加給 20%。本系統以加給容積的三成五估捐贈樓地板。',
+      note: '基地 2,000 ㎡ 以上：臨接 20 公尺以上道路加給基準容積 10%、30 公尺以上 15%、40 公尺以上 20%。'
+          + '容移加給部分應以代金辦理。'
+    },
+
     /* ===== 危老與都更共用 ===== */
     {
       id: 'SEISMIC', name: '耐震設計標章', lawName: HR_LAW + '第6條／' + UR_LAW + '第13條', article: '',
@@ -377,6 +391,14 @@ window.TD = window.TD || {};
       if (a >= 10000) return { pct: 0.30, why: '土地面積 1 萬 ㎡ 以上' };
       if (a >= 3000) return { pct: Math.round((0.05 + Math.floor((a - 3000) / 100) * 0.003) * 1e4) / 1e4, why: '土地面積 ' + Math.round(a) + ' ㎡' };
       return { pct: 0, why: '土地面積未達 3,000 ㎡（未含完整計畫街廓）' };
+    },
+    ntpBase: function (c) {
+      if (c.city !== '新北市') return { pct: 0, why: '僅適用新北市' };
+      if (!(c.siteM2 >= 2000)) return { pct: 0, why: '基地 ' + Math.round(c.siteM2) + ' ㎡ 未達 2,000 ㎡（可合併鄰地達到門檻）' };
+      if (c.roadWidth >= 40) return { pct: 0.20, why: '基地 2,000 ㎡ 以上、臨接 40 公尺以上道路' };
+      if (c.roadWidth >= 30) return { pct: 0.15, why: '基地 2,000 ㎡ 以上、臨接 30 公尺以上道路' };
+      if (c.roadWidth >= 20) return { pct: 0.10, why: '基地 2,000 ㎡ 以上、臨接 20 公尺以上道路' };
+      return { pct: 0, why: '面前道路 ' + c.roadWidth + ' 公尺，未達 20 公尺' };
     },
     hrScale: function (c) {
       var a = c.siteM2;

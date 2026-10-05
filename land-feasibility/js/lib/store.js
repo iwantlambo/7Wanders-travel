@@ -199,7 +199,7 @@ window.TD = window.TD || {};
         zone: '住宅區', productType: 'auto',
         roadWidth: null, roadCount: 1, corner: false, frontageM: null, siteWidth: null, siteDepth: null,
         northZone: 'same', mrtDistanceM: null,
-        ownerCount: 1, shareDenomMax: 1, buildingAgeYears: 0, existingFloorM2: 0, hrStatus: 'auto',
+        ownerCount: 1, shareDenomMax: 1, buildingAgeYears: 0, existingFloorM2: 0, hrStatus: 'auto', rezone: 'none',
         deedText: '', notes: ''
       },
       m2: { manualFlags: {}, consent: { owners: 0, agreeOwners: 0, shareAgree: 0 }, resolvedNotes: '' },
@@ -214,7 +214,8 @@ window.TD = window.TD || {};
       m6: {
         comps: [], compSource: 'district',
         subject: { ageYears: 0, floor: null, areaPing: null, distanceM: 0 },
-        presalePremium: null, absorbPerMonth: null, manualUnitPricePing: null, parkingPricePerStall: null
+        presalePremium: null, absorbPerMonth: null, manualUnitPricePing: null, parkingPricePerStall: null,
+        researchText: ''
       },
       m7: {
         constructionKey: 'auto', constructionPerPingOverride: null,
@@ -338,6 +339,8 @@ window.TD = window.TD || {};
     p.parcel.buildingAgeYears = takeNum(s, 'buildingAgeYears', 0);
     p.parcel.existingFloorM2 = takeNum(s, 'existingFloorM2', 0);
     p.parcel.hrStatus = takeStr(s, 'hrStatus', 'auto');
+    p.parcel.rezone = takeStr(s, 'rezone', 'none');
+    if (['none', 'res', 'com'].indexOf(p.parcel.rezone) < 0) p.parcel.rezone = 'none';
     p.parcel.deedText = takeStr(s, 'deedText', '');
     p.parcel.notes = takeStr(s, 'notes', '');
 
@@ -385,6 +388,7 @@ window.TD = window.TD || {};
     p.m6.absorbPerMonth = takeNumOrNull(s, 'absorbPerMonth');
     p.m6.manualUnitPricePing = takeNumOrNull(s, 'manualUnitPricePing');
     p.m6.parkingPricePerStall = takeNumOrNull(s, 'parkingPricePerStall');
+    p.m6.researchText = takeStr(s, 'researchText', '');
 
     s = isObj(src.m7) ? src.m7 : {};
     p.m7.constructionKey = takeStr(s, 'constructionKey', 'auto');

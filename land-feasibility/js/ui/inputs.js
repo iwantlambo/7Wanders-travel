@@ -81,8 +81,12 @@ window.TD = window.TD || {};
              reason: z ? (z.farReason || '') : '' };
   }
 
-  function ratioRow(p) {
+  function ratioRow(p, site) {
     var s = seededRatios(p), h = '';
+    if (site && site.rezone && site.zone) {
+      s = { bcr: isNum(site.zone.bcr) ? site.zone.bcr : null, far: isNum(site.zone.far) ? site.zone.far : null,
+            reason: '變更後之' + site.zone.name + '：' + (site.zone.farReason || '依該計畫區') };
+    }
     h += row('', f('建蔽率 %', 'm3.overrides.bcr', {
         type: 'pct', min: 0, max: 100,
         placeholder: s.bcr === null ? '請輸入' : String(TD.math.round(s.bcr * 100, 1)),
@@ -106,6 +110,12 @@ window.TD = window.TD || {};
     for (i = 0; i < list.length; i++) out.push({ v: list[i], t: (prm[list[i]] && prm[list[i]].label) || list[i] });
     return out;
   }
+
+  var REZONE_OPTS = [
+    { v: 'none', t: '維持工業區（廠辦，可走立體化、危老或都更）' },
+    { v: 'res', t: '申請變更為住宅區（回饋 40%）' },
+    { v: 'com', t: '申請變更為商業區（回饋 44%）' }
+  ];
 
   var NORTH_OPTS = [
     { v: 'same', t: '與本基地同分區' }, { v: '住', t: '住宅區' }, { v: '商', t: '商業區' },
@@ -150,7 +160,12 @@ window.TD = window.TD || {};
          + (site.allowRes ? '' : '（' + esc(site.zone ? site.zone.name : '本分區') + '不得作住宅使用）') + '。</p>';
     }
     if (site && site.useConflict) h += U().noteText('bad', site.useConflict);
-    h += ratioRow(p);
+    if (site && site.rezoneable) {
+      h += row('one', f('開發路線（工業區）', 'parcel.rezone', { options: REZONE_OPTS }));
+      if (site.rezone) h += '<p class="legal">' + esc(site.rezone.note) + '</p>';
+      else h += '<p class="legal">工業區土地常以「變更為住宅／商業區」或「工業區都更」的潛力交易；選擇變更路線可試算回饋後的住宅、商業開發價值。</p>';
+    }
+    h += ratioRow(p, site);
     h += row('three', f('面前道路寬 m', 'parcel.roadWidth', { type: 'num', min: 0, placeholder: '8' })
       + f('臨路長度 m', 'parcel.frontageM', { type: 'num', min: 0 })
       + f('臨路條數', 'parcel.roadCount', { type: 'num', min: 0, step: '1' }));
@@ -386,6 +401,33 @@ window.TD = window.TD || {};
   }
 
   /* ------------------------------------------------------------------
+     3b. 研究行情：使用者查到的新案開價、成交與土地交易（優先於實價登錄中位數）
+     ------------------------------------------------------------------ */
+
+  var RESEARCH_PH = '住宅, 悅田吾澍, 77-88, 2026-09, 樂居\n'
+                  + '廠辦, 三重立體化廠辦新案, 52-62, 2026, 仲介報導\n'
+                  + '土地, TOYOTA 三重舊廠（溪尾街）, 70, 2025-10, ETtoday 房產雲';
+
+  function researchBody(ctx, p) {
+    var m6 = ctx && ctx.m6 ? ctx.m6 : null, rs = m6 && m6.research ? m6.research : null;
+    var h = '<p class="legal">每行一筆：類別（住宅／華廈／透天／廠辦／辦公／店面／土地）, 名稱, 單價萬／坪（可寫區間 77-88）, 年月, 來源。'
+          + '有同產品的研究行情時，售價改用研究行情中位數；有土地行情時，土地比較改用研究行情。實價登錄仍列在比價明細供對照。</p>';
+    h += '<div class="field"><textarea data-bind="m6.researchText" rows="5" placeholder="' + esc(RESEARCH_PH) + '"></textarea></div>';
+    if (rs) {
+      h += '<p class="legal">已讀入 ' + esc(String(rs.items.length)) + ' 筆（本案產品售價 ' + esc(String(rs.priceN))
+         + ' 筆、土地 ' + esc(String(rs.landN)) + ' 筆）。</p>';
+      if (rs.errors && rs.errors.length) h += U().noteText('warn', rs.errors.join('；'));
+    }
+    return h;
+  }
+
+  function researchSub(ctx) {
+    var rs = ctx && ctx.m6 && ctx.m6.research ? ctx.m6.research : null;
+    if (!rs || !rs.items.length) return '未輸入（採用實價登錄）';
+    return rs.items.length + ' 筆，優先採用';
+  }
+
+  /* ------------------------------------------------------------------
      4. 進階假設
      ------------------------------------------------------------------ */
 
@@ -519,6 +561,8 @@ window.TD = window.TD || {};
       { sub: deedSub(ctx, p) });
     h += U().sec('in-regime', '開發方式與容積獎勵', regimeBody(ctx, p), open('in-regime', false),
       { sub: regimeSub(ctx, p) });
+    h += U().sec('in-research', '研究行情（新案開價、土地成交）', researchBody(ctx, p), open('in-research', false),
+      { sub: researchSub(ctx) });
     h += U().sec('in-adv', '進階假設', advBody(ctx, p), open('in-adv', false),
       { sub: advSub(p) });
     return h;
